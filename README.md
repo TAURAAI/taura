@@ -42,7 +42,7 @@ go run ./cmd/server
 # Tauri Companion (separate shell)
 cd apps/companion
 npm run dev  # or pnpm dev once converted
-# In another shell: cargo build will be triggered automatically by tauri when building the desktop app
+# In another shell: cargo build will be triggered automatically by tauri when building the desktop app 
 ```
 
 Visit Adminer: http://localhost:8081 (system: PostgreSQL, server: postgres, user: postgres, password: postgres, db: omnirecall)
