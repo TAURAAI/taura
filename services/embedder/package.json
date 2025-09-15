@@ -1,0 +1,9 @@
+{
+  "name": "embedder",
+  "version": "1.0.0",
+  "description": "Embedding service for Taura",
+  "scripts": {
+    "dev": "python -m uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload",
+    "build": "echo 'No build needed for Python service'"
+  }
+}

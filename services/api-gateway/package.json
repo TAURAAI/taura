@@ -1,0 +1,9 @@
+{
+  "name": "api-gateway",
+  "version": "1.0.0",
+  "description": "API Gateway service for Taura",
+  "scripts": {
+    "dev": "go mod download && go run cmd/server/main.go",
+    "build": "go mod download && go build -o bin/server cmd/server/main.go"
+  }
+}
