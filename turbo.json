@@ -6,7 +6,20 @@
       "outputs": ["dist/**", "build/**"]
     },
     "dev": {
-      "cache": false
+      "cache": false,
+      "persistent": true
+    },
+    "dev:api-gateway": {
+      "cache": false,
+      "persistent": true
+    },
+    "dev:embedder": {
+      "cache": false,
+      "persistent": true
+    },
+    "dev:companion:tauri": {
+      "cache": false,
+      "persistent": true
     },
     "lint": {},
     "test": {}

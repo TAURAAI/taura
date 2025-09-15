@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3000",
+    "dev": "tauri dev",
+    "dev:vite": "vite --port 3000",
     "tauri:dev": "tauri dev",
     "start": "vite --port 3000",
     "build": "vite build && tsc",

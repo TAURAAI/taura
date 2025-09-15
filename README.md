@@ -1,14 +1,72 @@
-# Taura Monorepo (OmniRecall MVP)
+# Taura Development Setup
 
-Monorepo scaffolding for the multimodal recall project: Tauri companion app, Go API gateway, Postgres + pgvector infra.
+## Quick Start (Tauri App Only)
 
-## Structure
+To test the media discovery functionality without backend services:
+
+```bash
+# Start just the Tauri companion app
+cd apps/companion && pnpm dev
 ```
-apps/
-  companion/          # Vite + React + Tailwind v4 + Tauri (src-tauri)
-services/
-  api-gateway/        # Go Fiber service (/healthz /search /sync)
-packages/
+
+This will start the Tauri app which can scan local folders and display media files.
+
+## Full Development Stack
+
+### Prerequisites
+
+1. **Docker Desktop** - Required for database
+2. **Go 1.23+** - For API Gateway
+3. **Python 3.9+** - For embedding service
+4. **Node.js 18+** and **pnpm** - For frontend
+5. **Rust** - For Tauri app
+
+### Setup Infrastructure
+
+```bash
+# Start PostgreSQL with pgvector
+pnpm run dev:infra
+```
+
+### Development Commands
+
+```bash
+# Start everything (requires Docker, Go, Python)
+pnpm run dev:full
+
+# Or start individual services:
+pnpm run dev:companion     # Tauri app
+pnpm run dev:api-gateway   # Go backend
+pnpm run dev:embedder      # Python FastAPI
+pnpm run dev:infra         # Docker containers
+```
+
+### Environment Setup
+
+#### Python Dependencies
+```bash
+cd services/embedder
+pip install -r requirements.txt
+```
+
+#### Go Dependencies
+```bash
+cd services/api-gateway
+go mod download
+```
+
+## Architecture
+
+- **Companion App**: Tauri v2 app for media indexing and search UI
+- **API Gateway**: Go Fiber service for handling requests
+- **Embedder**: Python FastAPI service for generating embeddings
+- **Database**: PostgreSQL with pgvector extension
+
+## Current Status
+
+✅ **Working**: Media file discovery and scanning in Tauri app  
+🔄 **In Progress**: Backend integration, embedding generation  
+🚧 **Todo**: Search functionality, proper folder picker
   schema/             # SQL schema (pg.sql)
 infra/
   docker-compose.yml  # Postgres (pgvector) + Adminer

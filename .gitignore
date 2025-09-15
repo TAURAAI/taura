@@ -43,3 +43,5 @@ coverage/
 *.db
 tmp/
 AGENTS.md
+
+__pycache__/
