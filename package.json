@@ -3,12 +3,19 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "packageManager": "pnpm@9.0.0",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev:companion": "pnpm --filter companion dev",
-    "dev:companion:tauri": "pnpm --filter companion tauri:dev",
+    "dev:companion:vite": "pnpm --filter companion dev:vite",
+    "dev:api-gateway": "cd services/api-gateway && go run cmd/server/main.go",
+    "dev:embedder": "cd services/embedder && python -m uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload",
+    "dev:infra": "cd infra && docker compose up -d",
+    "dev:setup": "pnpm run dev:infra && timeout /t 10 /nobreak",
     "build:companion": "pnpm --filter companion build",
-    "dev": "turbo run dev --parallel"
+    "dev": "pnpm run dev:companion",
+    "dev:full": "turbo run dev --parallel",
+    "dev:backend": "pnpm run dev:embedder"
   },
   "keywords": [],
   "author": "",

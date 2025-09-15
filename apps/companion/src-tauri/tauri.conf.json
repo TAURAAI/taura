@@ -1,22 +1,49 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Taura Companion",
+  "productName": "Taura",
   "version": "0.1.0",
-  "identifier": "com.taura.dev",
+  "identifier": "com.taura.overlay",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm dev:vite",
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
     "windows": [
       {
-        "title": "TAURA",
-        "width": 800,
-        "height": 600,
+        "label": "main",
+        "title": "Taura - Settings & Configuration",
+        "width": 1000,
+        "height": 700,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": true,
+        "alwaysOnTop": false,
+        "skipTaskbar": false,
+        "transparent": false,
+        "center": true,
+        "visible": true,
+        "focus": true
+      },
+      {
+        "label": "overlay",
+        "title": "Taura Search",
+        "width": 600,
+        "height": 60,
+        "minHeight": 60,
+        "maxHeight": 500,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "transparent": true,
+        "center": false,
+        "x": 300,
+        "y": 50,
+        "visible": false,
+        "focus": false
       }
     ],
     "security": {
