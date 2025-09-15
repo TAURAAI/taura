@@ -1,0 +1,19 @@
+{
+  "name": "taura",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev:companion": "pnpm --filter companion dev",
+    "dev:companion:tauri": "pnpm --filter companion tauri:dev",
+    "build:companion": "pnpm --filter companion build",
+    "dev": "turbo run dev --parallel"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "turbo": "^2.5.6"
+  }
+}
