@@ -31,10 +31,11 @@ CREATE TABLE IF NOT EXISTS media_vecs (
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_media_user_ts ON media(user_id, ts);
-CREATE INDEX IF NOT EXISTS idx_media_vecs_embedding ON media_vecs USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+CREATE INDEX IF NOT EXISTS idx_media_vecs_embedding
+  ON media_vecs USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Simple view joining media + vector existence
-CREATE VIEW IF NOT EXISTS media_with_vec AS
+CREATE OR REPLACE VIEW media_with_vec AS
 SELECT m.*, (mv.media_id IS NOT NULL) AS has_vec
 FROM media m
 LEFT JOIN media_vecs mv ON mv.media_id = m.id;
