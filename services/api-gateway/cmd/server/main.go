@@ -8,23 +8,22 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/joho/godotenv"
 	"github.com/TAURAAI/taura/api-gateway/internal/handlers"
 	"github.com/TAURAAI/taura/api-gateway/internal/db"
 )
 
 func loadRootEnv() {
-	// Attempt local load first; then walk up to find repo root containing .git or AGENTS.md
 	_ = godotenv.Load()
 	if os.Getenv("DATABASE_URL") != "" { return }
 	wd, _ := os.Getwd()
-	for i := 0; i < 6; i++ { // climb up to 6 levels max
+	for i := 0; i < 6; i++ {
 		candidate := filepath.Join(wd, ".env")
 		if _, err := os.Stat(candidate); err == nil {
 			_ = godotenv.Overload(candidate)
 			if os.Getenv("DATABASE_URL") != "" { return }
 		}
-		// Heuristic: stop if we see a .git folder
 		if _, err := os.Stat(filepath.Join(wd, ".git")); err == nil { break }
 		wd = filepath.Dir(wd)
 	}
@@ -37,14 +36,26 @@ func main() {
 	if err != nil { log.Fatalf("db connect: %v", err) }
 	defer database.Close()
 
+	if err := database.AutoMigrate(ctx); err != nil {
+		log.Printf("auto migrate error: %v", err)
+	}
+
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Use(recover.New())
 	app.Use(logger.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "*",
+		AllowMethods:     "GET,POST,OPTIONS",
+		AllowHeaders:     "Content-Type,Authorization",
+		AllowCredentials: false,
+	}))
 
 	// inject db into context via locals middleware
 	app.Use(func(c *fiber.Ctx) error { c.Locals("db", database); return c.Next() })
 
 	app.Get("/healthz", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	app.Get("/health", func(c *fiber.Ctx) error { return c.SendString("ok") })
+	app.Options("/search", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	app.Post("/search", handlers.PostSearch)
 	app.Post("/sync", handlers.PostSync)
 
