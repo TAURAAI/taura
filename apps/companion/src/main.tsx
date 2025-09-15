@@ -1,14 +1,13 @@
 import { StrictMode } from 'react'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
-// Import the generated route tree
 import { routeTree } from './routeTree.gen'
 
 import './styles.css'
 import reportWebVitals from './reportWebVitals.ts'
 
-// Create a new router instance
 const router = createRouter({
   routeTree,
   context: {},
@@ -18,25 +17,43 @@ const router = createRouter({
   defaultPreloadStaleTime: 0,
 })
 
-// Register the router instance for type safety
 declare module '@tanstack/react-router' {
   interface Register {
     router: typeof router
   }
 }
 
-// Render the app
-const rootElement = document.getElementById('app')
-if (rootElement && !rootElement.innerHTML) {
-  const root = ReactDOM.createRoot(rootElement)
-  root.render(
-    <StrictMode>
-      <RouterProvider router={router} />
-    </StrictMode>,
-  )
+async function getInitialRoute() {
+  try {
+    const currentWindow = getCurrentWebviewWindow()
+    const windowLabel = currentWindow.label
+    
+    if (windowLabel === 'overlay') {
+      return '/overlay'
+    } else {
+      return '/'
+    }
+  } catch (e) {
+    console.warn('Could not detect window label, defaulting to main route')
+    return '/'
+  }
 }
 
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
+async function initApp() {
+  const initialRoute = await getInitialRoute()
+  
+  await router.navigate({ to: initialRoute })
+
+  const rootElement = document.getElementById('app')
+  if (rootElement && !rootElement.innerHTML) {
+    const root = ReactDOM.createRoot(rootElement)
+    root.render(
+      <StrictMode>
+        <RouterProvider router={router} />
+      </StrictMode>,
+    )
+  }
+}
+
+initApp().catch(console.error)
 reportWebVitals()
