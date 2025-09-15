@@ -8,6 +8,7 @@ import (
 	"log"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type SearchRequest struct {
@@ -42,9 +43,15 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	if req.Text == "" { return c.JSON(SearchResponse{Results: []SearchResult{}}) }
 
+	start := time.Now()
 	vec, err := embed.Text(context.Background(), req.Text)
 	if err != nil {
+		log.Printf("embedder text error text='%s' err=%v", truncate(req.Text, 80), err)
 		return fiber.NewError(fiber.StatusBadGateway, "embedder error")
+	}
+	dur := time.Since(start)
+	if dur > 150*time.Millisecond {
+		log.Printf("embedder latency warn ms=%d", dur.Milliseconds())
 	}
 
 	database, ok := c.Locals("db").(*db.Database)
@@ -94,4 +101,9 @@ func PostSearch(c *fiber.Ctx) error {
 			results = append(results, r)
 		}
 		return c.JSON(SearchResponse{Results: results})
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n] + "…"
 }

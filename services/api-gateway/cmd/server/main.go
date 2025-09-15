@@ -1,17 +1,17 @@
 package main
 
 import (
-	"log"
-	"os"
-	"context"
-	"path/filepath"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/logger"
-	"github.com/gofiber/fiber/v2/middleware/recover"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/joho/godotenv"
-	"github.com/TAURAAI/taura/api-gateway/internal/handlers"
-	"github.com/TAURAAI/taura/api-gateway/internal/db"
+  "log"
+  "os"
+  "context"
+  "path/filepath"
+  "github.com/gofiber/fiber/v2"
+  "github.com/gofiber/fiber/v2/middleware/cors"
+  "github.com/gofiber/fiber/v2/middleware/logger"
+  "github.com/gofiber/fiber/v2/middleware/recover"
+  "github.com/joho/godotenv"
+  "github.com/TAURAAI/taura/api-gateway/internal/handlers"
+  "github.com/TAURAAI/taura/api-gateway/internal/db"
 )
 
 func loadRootEnv() {
@@ -43,12 +43,12 @@ func main() {
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Use(recover.New())
 	app.Use(logger.New())
-	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
-		AllowMethods:     "GET,POST,OPTIONS",
-		AllowHeaders:     "Content-Type,Authorization",
-		AllowCredentials: false,
-	}))
+  app.Use(cors.New(cors.Config{
+    AllowOrigins:     "*",
+    AllowMethods:     "GET,POST,OPTIONS",
+    AllowHeaders:     "Content-Type,Authorization",
+    AllowCredentials: false,
+  }))
 
 	// inject db into context via locals middleware
 	app.Use(func(c *fiber.Ctx) error { c.Locals("db", database); return c.Next() })
