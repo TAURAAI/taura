@@ -1,10 +1,14 @@
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+
 #[derive(serde::Serialize)]
 struct MediaMeta {
   path: String,
   size: u64,
   modified: Option<String>,
   modality: String,
+  lat: Option<f64>,
+  lon: Option<f64>,
+  timestamp: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -16,8 +20,34 @@ struct ScanResult {
 
 fn is_media_file(entry: &std::path::Path) -> bool {
   match entry.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()) {
-    Some(ext) => matches!(ext.as_str(), "jpg"|"jpeg"|"png"|"gif"|"webp"|"bmp"|"tiff"|"tif"|"heic"|"heif"|"pdf"),
+    Some(ext) => matches!(ext.as_str(), "jpg"|"jpeg"|"png"|"gif"|"webp"|"bmp"|"tiff"|"tif"|"heic"|"heif"|"pdf"|"mp4"|"mov"|"avi"|"mkv"),
     None => false,
+  }
+}
+
+#[tauri::command]
+async fn get_default_folder() -> Result<String, String> {
+  let home_dir = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME"))
+    .unwrap_or_else(|_| "C:\\".to_string());
+  let pictures_path = format!("{}\\Pictures", home_dir);
+  
+  if std::path::Path::new(&pictures_path).exists() {
+    Ok(pictures_path)
+  } else {
+    Ok(home_dir)
+  }
+}
+
+#[tauri::command]
+async fn pick_folder() -> Result<Option<String>, String> {
+  // Use rfd to show a native folder picker dialog
+  let folder = rfd::FileDialog::new()
+    .set_title("Select Media Folder")
+    .pick_folder();
+  
+  match folder {
+    Some(path) => Ok(Some(path.to_string_lossy().to_string())),
+    None => Ok(None),
   }
 }
 
@@ -29,6 +59,7 @@ async fn scan_folder(path: String, max_samples: Option<usize>) -> Result<ScanRes
   let mut count: usize = 0;
   let mut items: Vec<MediaMeta> = Vec::new();
   let walker = walkdir::WalkDir::new(&path).follow_links(false).max_depth(8);
+  
   for entry in walker {
     let entry = match entry { Ok(e) => e, Err(_) => continue };
     if entry.file_type().is_file() {
@@ -38,8 +69,9 @@ async fn scan_folder(path: String, max_samples: Option<usize>) -> Result<ScanRes
         if samples.len() < limit {
           if let Some(s) = p.to_str() { samples.push(s.to_string()); }
         }
-        // metadata
-        let mut size: u64 = 0; let mut modified: Option<String> = None;
+        
+        let mut size: u64 = 0; 
+        let mut modified: Option<String> = None;
         if let Ok(md) = entry.metadata() {
           size = md.len();
           if let Ok(mt) = md.modified() {
@@ -47,11 +79,26 @@ async fn scan_folder(path: String, max_samples: Option<usize>) -> Result<ScanRes
             modified = Some(dt.to_rfc3339());
           }
         }
+        
+        let (lat, lon, exif_timestamp) = (None, None, None);
+        
         let modality = match p.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()) {
           Some(ext) if ext == "pdf" => "pdf_page".to_string(),
+          Some(ext) if matches!(ext.as_str(), "mp4"|"mov"|"avi"|"mkv") => "video".to_string(),
           _ => "image".to_string(),
         };
-        if let Some(s) = p.to_str() { items.push(MediaMeta { path: s.to_string(), size, modified, modality }); }
+        
+        if let Some(s) = p.to_str() { 
+          items.push(MediaMeta { 
+            path: s.to_string(), 
+            size, 
+            modified, 
+            modality,
+            lat,
+            lon,
+            timestamp: exif_timestamp,
+          }); 
+        }
       }
     }
   }
@@ -82,7 +129,7 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, S
 
 pub fn run() {
   tauri::Builder::default()
-  .invoke_handler(tauri::generate_handler![scan_folder, sync_index])
+    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

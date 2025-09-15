@@ -14,10 +14,11 @@ function App() {
   const [query, setQuery] = useState('')
   const [folderCount, setFolderCount] = useState<number | null>(null)
   const [samples, setSamples] = useState<string[]>([])
-  const [items, setItems] = useState<{ path: string; size: number; modified?: string; modality: string }[]>([])
+  const [items, setItems] = useState<{ path: string; size: number; modified?: string; modality: string; lat?: number; lon?: number; timestamp?: string }[]>([])
   const [indexing, setIndexing] = useState(false)
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [searching, setSearching] = useState(false)
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const debounceRef = useRef<number | null>(null)
 
   useEffect(() => {
@@ -41,15 +42,48 @@ function App() {
   }, [query])
   const [scanning, setScanning] = useState(false)
 
+  async function handlePickFolder() {
+    try {
+      const folderPath = await invoke<string | null>('pick_folder')
+      if (folderPath) {
+        setSelectedFolder(folderPath)
+        console.log('Selected folder:', folderPath)
+      }
+    } catch (e) {
+      console.error('Failed to pick folder:', e)
+    }
+  }
+
+  async function loadDefaultFolder() {
+    try {
+      const defaultPath = await invoke<string>('get_default_folder')
+      setSelectedFolder(defaultPath)
+      console.log('Default folder:', defaultPath)
+    } catch (e) {
+      console.error('Failed to get default folder:', e)
+    }
+  }
+
+  useEffect(() => {
+    loadDefaultFolder()
+  }, [])
+
   async function handleScan() {
+    if (!selectedFolder) {
+      alert('Please select a folder first')
+      return
+    }
+    
     setScanning(true)
     try {
-  const res = await invoke<{ count: number; samples: string[]; items: { path:string; size:number; modified?: string; modality: string }[] }>('scan_folder', { path: 'C:/placeholder', maxSamples: 8 })
-  setFolderCount(res.count)
-  setSamples(res.samples)
-  setItems(res.items)
+      const res = await invoke<{ count: number; samples: string[]; items: { path:string; size:number; modified?: string; modality: string; lat?: number; lon?: number; timestamp?: string }[] }>('scan_folder', { path: selectedFolder, maxSamples: 8 })
+      setFolderCount(res.count)
+      setSamples(res.samples)
+      setItems(res.items)
+      console.log('Scan completed:', res)
     } catch (e) {
-      console.error(e)
+      console.error('Scan failed:', e)
+      alert('Failed to scan folder: ' + e)
     } finally {
       setScanning(false)
     }
@@ -75,12 +109,23 @@ function App() {
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h2 className="font-medium">Indexing</h2>
-            <button
-              onClick={handleScan}
-              disabled={scanning}
-              className="rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 px-3 py-1 text-sm font-medium"
-            >{scanning ? 'Scanning...' : 'Scan Folder'}</button>
+            <div className="flex gap-2">
+              <button
+                onClick={handlePickFolder}
+                className="rounded bg-purple-600 hover:bg-purple-500 px-3 py-1 text-sm font-medium"
+              >Change Folder</button>
+              <button
+                onClick={handleScan}
+                disabled={scanning || !selectedFolder}
+                className="rounded bg-sky-600 hover:bg-sky-500 disabled:opacity-50 px-3 py-1 text-sm font-medium"
+              >{scanning ? 'Scanning...' : 'Scan Media Files'}</button>
+            </div>
           </div>
+          {selectedFolder && (
+            <div className="text-sm text-neutral-400 bg-neutral-800 p-3 rounded border">
+              <strong>Scanning folder:</strong> {selectedFolder}
+            </div>
+          )}
           <div className="text-sm text-neutral-400 space-y-1">
             {folderCount === null ? 'No folder scanned yet.' : `Indexed ${folderCount} media files.`}
             {samples.length > 0 && (
@@ -96,7 +141,15 @@ function App() {
                 onClick={async () => {
                   setIndexing(true)
                   try {
-                    const payload = { items: items.slice(0, 200).map(it => ({ user_id: 'demo-user', modality: it.modality, uri: it.path, ts: it.modified })) }
+                    const payload = { items: items.slice(0, 200).map(it => ({ 
+                      user_id: 'demo-user', 
+                      modality: it.modality, 
+                      uri: it.path, 
+                      ts: it.modified,
+                      lat: it.lat,
+                      lon: it.lon,
+                      timestamp: it.timestamp
+                    })) }
                     const upserted = await invoke<number>('sync_index', { serverUrl: 'http://localhost:8080', payload })
                     console.log('upserted', upserted)
                   } catch (e) { console.error(e) } finally { setIndexing(false) }
