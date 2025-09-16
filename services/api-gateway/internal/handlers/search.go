@@ -8,6 +8,7 @@ import (
 	"log"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type SearchRequest struct {
@@ -42,18 +43,21 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	if req.Text == "" { return c.JSON(SearchResponse{Results: []SearchResult{}}) }
 
-	// Embed text
+	start := time.Now()
 	vec, err := embed.Text(context.Background(), req.Text)
 	if err != nil {
+		log.Printf("embedder text error text='%s' err=%v", truncate(req.Text, 80), err)
 		return fiber.NewError(fiber.StatusBadGateway, "embedder error")
 	}
+	dur := time.Since(start)
+	if dur > 150*time.Millisecond {
+		log.Printf("embedder latency warn ms=%d", dur.Milliseconds())
+	}
 
-	// Query pgvector
 	database, ok := c.Locals("db").(*db.Database)
 	if !ok || database == nil { return fiber.NewError(fiber.StatusInternalServerError, "db missing") }
 	if len(vec) == 0 { return fiber.NewError(fiber.StatusInternalServerError, "empty embedding") }
 
-		// Build dynamic filter fragments (basic modality filter)
 		modalityClause := ""
 		var modalities []string
 		if raw, ok := req.Filters["modality"]; ok {
@@ -65,13 +69,11 @@ func PostSearch(c *fiber.Ctx) error {
 			}
 		}
 		if len(modalities) > 0 {
-			// We'll inline an IN list (safe because modalities are validated small & alnum/underscore)
 			quoted := make([]string, 0, len(modalities))
 			for _, m := range modalities { quoted = append(quoted, fmt.Sprintf("'%s'", strings.ReplaceAll(m, "'", "''"))) }
 			modalityClause = " AND m.modality IN (" + strings.Join(quoted, ",") + ")"
 		}
 
-		// Vector literal for pgvector: '[x,y,z]' cast to vector
 		parts := make([]string, len(vec))
 		for i, f := range vec { parts[i] = fmt.Sprintf("%.6f", f) }
 		vectorLiteral := "[" + strings.Join(parts, ",") + "]"
@@ -99,4 +101,9 @@ func PostSearch(c *fiber.Ctx) error {
 			results = append(results, r)
 		}
 		return c.JSON(SearchResponse{Results: results})
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n] + "…"
 }

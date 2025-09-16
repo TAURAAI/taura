@@ -1,3 +1,6 @@
+use tauri::Manager;
+use walkdir::WalkDir;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 
 #[derive(serde::Serialize)]
@@ -58,7 +61,7 @@ async fn scan_folder(path: String, max_samples: Option<usize>) -> Result<ScanRes
   let mut samples = Vec::new();
   let mut count: usize = 0;
   let mut items: Vec<MediaMeta> = Vec::new();
-  let walker = walkdir::WalkDir::new(&path).follow_links(false).max_depth(8);
+  let walker = WalkDir::new(&path).follow_links(false).max_depth(8);
   
   for entry in walker {
     let entry = match entry { Ok(e) => e, Err(_) => continue };
@@ -127,9 +130,32 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, S
   Ok(v.get("upserted").and_then(|x| x.as_u64()).unwrap_or(0) as usize)
 }
 
+#[tauri::command]
+async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(overlay_window) = app.get_webview_window("overlay") {
+    let is_visible = overlay_window.is_visible().map_err(|e| e.to_string())?;
+    if is_visible {
+      overlay_window.hide().map_err(|e| e.to_string())?;
+    } else {
+      overlay_window.show().map_err(|e| e.to_string())?;
+      overlay_window.set_focus().map_err(|e| e.to_string())?;
+    }
+  }
+  Ok(())
+}
+
+#[tauri::command]
+async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(main_window) = app.get_webview_window("main") {
+    main_window.show().map_err(|e| e.to_string())?;
+    main_window.set_focus().map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index])
+    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, toggle_overlay, show_main_window])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
