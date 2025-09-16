@@ -1,4 +1,6 @@
 use tauri::Manager;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
+use std::process::Command;
 use walkdir::WalkDir;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -153,9 +155,42 @@ async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
   Ok(())
 }
 
+#[tauri::command]
+async fn open_file(path: String) -> Result<(), String> {
+  if path.is_empty() { return Err("path empty".into()); }
+  #[cfg(target_os = "windows")]
+  {
+    Command::new("cmd").args(["/C", "start", "", &path]).spawn().map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "macos")]
+  {
+    Command::new("open").arg(&path).spawn().map_err(|e| e.to_string())?;
+  }
+  #[cfg(target_os = "linux")]
+  {
+    Command::new("xdg-open").arg(&path).spawn().map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 pub fn run() {
+  #[cfg(not(target_os = "macos"))]
+  let shortcut_str = "Ctrl+Shift+K";
+  #[cfg(target_os = "macos")]
+  let shortcut_str = "Command+Shift+K";
+
+  let shortcut_builder = tauri_plugin_global_shortcut::Builder::new()
+    .with_shortcut(shortcut_str)
+    .expect("register shortcut definition")
+    .with_handler(|app_handle, _shortcut, _event| {
+      let h = app_handle.clone();
+      tauri::async_runtime::spawn(async move { let _ = toggle_overlay(h); });
+    })
+    .build();
+
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, toggle_overlay, show_main_window])
+    .plugin(shortcut_builder)
+    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, toggle_overlay, show_main_window, open_file])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

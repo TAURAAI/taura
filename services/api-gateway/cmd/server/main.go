@@ -39,6 +39,9 @@ func main() {
 	if err := database.AutoMigrate(ctx); err != nil {
 		log.Printf("auto migrate error: %v", err)
 	}
+	if err := database.EnsureMediaUserUriUnique(ctx); err != nil {
+		log.Printf("ensure unique (user_id,uri) index error: %v", err)
+	}
 
 	app := fiber.New(fiber.Config{DisableStartupMessage: true})
 	app.Use(recover.New())

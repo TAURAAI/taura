@@ -1,11 +1,20 @@
 # syntax=docker/dockerfile:1
-FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04 AS base
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-pip python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY app ./app
+
+# Pre-download the model
+RUN python3 -c "from app.models import load_model; load_model()"
+
+# Set environment variables
+ENV VISION_SIZE="384"
+ENV ENABLE_TTA="1"
+ENV PANORAMA_MAX_RATIO="2.6"
+
 ENV PYTHONUNBUFFERED=1
 EXPOSE 9000
 CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
