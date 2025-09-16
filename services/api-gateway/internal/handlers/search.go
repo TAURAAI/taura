@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"math"
 )
 
 type SearchRequest struct {
@@ -68,24 +69,74 @@ func PostSearch(c *fiber.Ctx) error {
 				modalities = v
 			}
 		}
+		params := []interface{}{}
+		paramIdx := 2 // 1 reserved for vector
+		inList := []string{}
 		if len(modalities) > 0 {
-			quoted := make([]string, 0, len(modalities))
-			for _, m := range modalities { quoted = append(quoted, fmt.Sprintf("'%s'", strings.ReplaceAll(m, "'", "''"))) }
-			modalityClause = " AND m.modality IN (" + strings.Join(quoted, ",") + ")"
+			for _, m := range modalities {
+				inList = append(inList, fmt.Sprintf("$%d", paramIdx))
+				params = append(params, m)
+				paramIdx++
+			}
+			modalityClause = " AND m.modality IN (" + strings.Join(inList, ",") + ")"
 		}
 
 		parts := make([]string, len(vec))
 		for i, f := range vec { parts[i] = fmt.Sprintf("%.6f", f) }
 		vectorLiteral := "[" + strings.Join(parts, ",") + "]"
 
+		var timeStart, timeEnd *time.Time
+		if trRaw, ok := req.Filters["time_range"]; ok {
+			if arr, ok := trRaw.([]interface{}); ok && len(arr) == 2 {
+				if s, ok := arr[0].(string); ok && s != "" { if t, err := time.Parse(time.RFC3339, s); err == nil { timeStart = &t } }
+				if s, ok := arr[1].(string); ok && s != "" { if t, err := time.Parse(time.RFC3339, s); err == nil { timeEnd = &t } }
+			}
+		}
+		if timeStart != nil { modalityClause += fmt.Sprintf(" AND (m.ts IS NOT NULL AND m.ts >= $%d)", paramIdx); params = append(params, *timeStart); paramIdx++ }
+		if timeEnd != nil { modalityClause += fmt.Sprintf(" AND (m.ts IS NOT NULL AND m.ts <= $%d)", paramIdx); params = append(params, *timeEnd); paramIdx++ }
+
+		if albRaw, ok := req.Filters["album"]; ok {
+			var albums []string
+			switch v := albRaw.(type) {
+			case string:
+				albums = []string{v}
+			case []interface{}:
+				for _, a := range v { if as, ok := a.(string); ok { albums = append(albums, as) } }
+			}
+			if len(albums) > 0 {
+				ph := make([]string, 0, len(albums))
+				for _, a := range albums { ph = append(ph, fmt.Sprintf("$%d", paramIdx)); params = append(params, a); paramIdx++ }
+				modalityClause += " AND m.album IN (" + strings.Join(ph, ",") + ")"
+			}
+		}
+
+		if geoRaw, ok := req.Filters["geo"]; ok {
+			if gmap, ok := geoRaw.(map[string]interface{}); ok {
+				latRaw, lok1 := gmap["lat"].(float64)
+				lonRaw, lok2 := gmap["lon"].(float64)
+				rawKm, lok3 := gmap["km"].(float64)
+				if lok1 && lok2 && lok3 && rawKm > 0 {
+					dLat := rawKm / 111.0
+					dLon := rawKm / (111.0 * math.Cos(latRaw*math.Pi/180.0))
+					minLat, maxLat := latRaw-dLat, latRaw+dLat
+					minLon, maxLon := lonRaw-dLon, lonRaw+dLon
+					modalityClause += fmt.Sprintf(" AND m.lat BETWEEN $%d AND $%d AND m.lon BETWEEN $%d AND $%d", paramIdx, paramIdx+1, paramIdx+2, paramIdx+3)
+					params = append(params, minLat, maxLat, minLon, maxLon)
+					paramIdx += 4
+				}
+			}
+		}
+
+		params = append([]interface{}{vectorLiteral, req.UserID}, params...)
+		params = append(params, req.TopK)
 		sql := fmt.Sprintf(`SELECT m.id, 1 - (v.embedding <=> $1::vector) AS score, COALESCE(m.thumb_url,''), m.uri, COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality
 			FROM media_vecs v
 			JOIN media m ON m.id = v.media_id
 			WHERE m.user_id = $2 AND m.deleted = false%s
 			ORDER BY v.embedding <=> $1::vector ASC
-			LIMIT %d`, modalityClause, req.TopK)
+			LIMIT $%d`, modalityClause, len(params))
 
-		rows, err := database.Pool.Query(context.Background(), sql, vectorLiteral, req.UserID)
+		rows, err := database.Pool.Query(context.Background(), sql, params...)
 		if err != nil {
 			log.Printf("search query error: %v", err)
 			return fiber.NewError(fiber.StatusInternalServerError, "query error")

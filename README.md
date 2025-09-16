@@ -121,5 +121,28 @@ Visit Adminer: http://localhost:8081 (system: PostgreSQL, server: postgres, user
 Tailwind v4 single import directive in `src/styles.css` is deliberate.
 Tauri `scan_folder` command currently stubbed.
 
+## Updated Embedding & Search Workflow
+
+1. Companion app scans a folder and calls `/sync` with a list of media items (user_id may be an email; backend resolves a UUID).
+2. The API gateway inserts (or resolves) the media row and for `image` and `pdf_page` modalities immediately calls the embedder service.
+3. Returned 768‑d embedding is inserted/upserted into `media_vecs`.
+4. The overlay UI issues `/search` as you type. Gateway embeds the query text, performs pgvector ANN (`ORDER BY embedding <=> query ASC LIMIT K`).
+5. Selecting a result opens the file via a native OS open command and hides the overlay. Press `Esc` to hide overlay at any time.
+
+### Embedder Endpoints (current contract)
+`POST /embed/text` JSON `{ "text": "describe a sunset over water" }` → `{ vec: number[768] }`
+
+`POST /embed/image` JSON (preferred during dev): `{ "uri": "C:/path/to/image.jpg" }` (requires env `ALLOW_LOCAL_URI=1`).
+Or supply `{ "bytes_b64": "..." }` with base64 image bytes. Multipart file upload also still works.
+
+### Overlay Shortcuts
+- Esc: hide overlay window
+- Click result: open file & hide overlay
+
+### Pending Enhancements
+- Batch embedding in `/sync` (collect N images then call future `/embed/image/batch`)
+- Time & geo filters in `/search`
+- Background queue for embeddings to keep `/sync` low latency
+
 ## License
 MIT (adjust as needed)

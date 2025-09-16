@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS media (
   deleted BOOLEAN DEFAULT FALSE
 );
 
+-- Ensure a user cannot have duplicate URI entries
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_user_uri ON media(user_id, uri);
+
 -- Media vectors
 CREATE TABLE IF NOT EXISTS media_vecs (
   media_id uuid PRIMARY KEY REFERENCES media(id) ON DELETE CASCADE,
