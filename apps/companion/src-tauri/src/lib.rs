@@ -1,7 +1,6 @@
-use tauri::Manager;
+use tauri::{Manager, Emitter};
 use std::process::Command;
 use walkdir::WalkDir;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 
@@ -133,6 +132,17 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, S
 }
 
 #[tauri::command]
+async fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
+  if let Some(overlay_window) = app.get_webview_window("overlay") {
+    overlay_window.show().map_err(|e| e.to_string())?;
+    overlay_window.set_focus().map_err(|e| e.to_string())?;
+    // Emit the toggle-overlay event to focus the input
+    let _ = app.emit("toggle-overlay", ());
+  }
+  Ok(())
+}
+
+#[tauri::command]
 async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
   if let Some(overlay_window) = app.get_webview_window("overlay") {
     if overlay_window.is_visible().map_err(|e| e.to_string())? {
@@ -140,6 +150,8 @@ async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
     } else {
       overlay_window.show().map_err(|e| e.to_string())?;
       overlay_window.set_focus().map_err(|e| e.to_string())?;
+      // Emit the toggle-overlay event to focus the input
+      let _ = app.emit("toggle-overlay", ());
     }
   }
   Ok(())
@@ -183,13 +195,15 @@ pub fn run() {
     .expect("register shortcut definition")
     .with_handler(|app_handle, _shortcut, _event| {
       let h = app_handle.clone();
-      tauri::async_runtime::spawn(async move { let _ = toggle_overlay(h); });
+      tauri::async_runtime::spawn(async move { 
+        let _ = show_overlay(h).await;
+      });
     })
     .build();
 
   tauri::Builder::default()
     .plugin(shortcut_builder)
-    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, toggle_overlay, show_main_window, open_file])
+    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, show_overlay, toggle_overlay, show_main_window, open_file])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
