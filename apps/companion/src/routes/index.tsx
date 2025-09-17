@@ -1,7 +1,9 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AppShell } from '../components/AppShell'
+import { QuickSearch } from '../components/QuickSearch'
+import { RecentItems } from '../components/RecentItems'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -57,59 +59,41 @@ function HomeScreen() {
 
   return (
     <AppShell>
-        <header className="mb-8">
-          <h1 className="heading-xl mb-2">Dashboard</h1>
-          <p className="muted text-sm">Overview of your indexed media and system status</p>
-        </header>
-        <div className="grid gap-6 md:grid-cols-3 mb-10">
-          <div className="glass-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-xs uppercase tracking-wide text-white/50">Files Indexed</span>
-              <span className="metric-chip">{serverStatus}</span>
-            </div>
-            <div className="text-4xl font-semibold mb-1">{stats.filesIndexed.toLocaleString()}</div>
-            <div className="text-xs text-white/40">
-              {stats.lastIndexed ? `Last indexed: ${stats.lastIndexed}` : 'No embeddings yet'}
-            </div>
-            <div className="text-[11px] text-white/35 mt-1">Total media detected: {stats.totalMedia.toLocaleString()}</div>
+      <header className="mb-6">
+        <h1 className="heading-xl mb-1">Home</h1>
+        <p className="muted text-sm">Search and manage your indexed media.</p>
+      </header>
+      <div className="grid gap-6 md:grid-cols-3 mb-8">
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[11px] uppercase tracking-wide text-white/50">Indexed</span>
+            <span className="metric-chip capitalize">{serverStatus}</span>
           </div>
-          <div className="glass-card p-5">
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-xs uppercase tracking-wide text-white/50">Server</span>
-            </div>
-            <div className="text-3xl font-semibold mb-1 capitalize">{serverStatus}</div>
-            <div className="text-xs text-white/40">Health endpoint polled</div>
-          </div>
-          <div className="glass-card p-5">
-            <div className="flex items-center justify-between mb-4"><span className="text-xs uppercase tracking-wide text-white/50">Mode</span></div>
-            <div className="text-3xl font-semibold mb-1">Semantic</div>
-            <div className="text-xs text-white/40">Vector recall active</div>
-          </div>
+          <div className="text-3xl font-semibold mb-1">{stats.filesIndexed.toLocaleString()}</div>
+          <div className="text-xs text-white/40">{stats.lastIndexed ? `Last: ${stats.lastIndexed}` : 'No embeddings yet'}</div>
+          <div className="text-[11px] text-white/30 mt-1">Media: {stats.totalMedia.toLocaleString()}</div>
         </div>
-        <div className="grid md:grid-cols-2 gap-6 mb-10">
-          <div className="glass-card p-6 flex flex-col">
-            <h2 className="text-lg font-medium mb-2 text-white">Search Overlay</h2>
-            <p className="text-sm text-white/50 mb-4">Launch the universal search palette anywhere.</p>
-            <button onClick={handleQuickOverlay} className="btn-primary w-fit">Open Overlay</button>
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[11px] uppercase tracking-wide text-white/50">Server</span>
           </div>
-          <div className="glass-card p-6 flex flex-col">
-            <h2 className="text-lg font-medium mb-2 text-white">Index Settings</h2>
-            <p className="text-sm text-white/50 mb-4">Configure folders, filters and privacy options.</p>
-            <Link to="/settings" className="btn-outline w-fit">Open Settings</Link>
-          </div>
+          <div className="text-2xl font-semibold mb-1 capitalize">{serverStatus}</div>
+          <div className="text-[11px] text-white/40">Health polled</div>
+          <button onClick={handleQuickOverlay} className="mt-3 btn-outline h-8 px-3 text-xs">Overlay</button>
         </div>
-        <div className="divider" />
-        <section className="grid md:grid-cols-3 gap-6">
-          {[{
-            title:'Smart Indexing', desc:'Analyze photos, documents & media automatically.'},
-            {title:'Natural Language', desc:'Describe what you remember—not filenames.'},
-            {title:'Instant Results', desc:'Low-latency vector retrieval with ANN.'}].map(b => (
-            <div key={b.title} className="glass-card p-5">
-              <h3 className="text-sm font-semibold mb-1 text-white/90">{b.title}</h3>
-              <p className="text-xs text-white/50 leading-relaxed">{b.desc}</p>
-            </div>
-          ))}
-        </section>
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[11px] uppercase tracking-wide text-white/50">Mode</span>
+          </div>
+          <div className="text-2xl font-semibold mb-1">Semantic</div>
+          <div className="text-[11px] text-white/40">Vector recall active</div>
+          <button onClick={() => invoke('open_settings_window').catch(()=>{})} className="mt-3 btn-outline h-8 px-3 text-xs">Settings</button>
+        </div>
+      </div>
+      <div className="grid gap-6 md:grid-cols-2 mb-8">
+        <QuickSearch />
+        <RecentItems />
+      </div>
     </AppShell>
   )
 }

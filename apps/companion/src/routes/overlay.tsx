@@ -45,9 +45,13 @@ function Overlay() {
   }, [query])
 
   useEffect(() => {
+    const prevBody = document.body.style.background
+    const prevHtml = (document.documentElement as HTMLElement).style.background
     document.body.style.background = 'transparent'
+    ;(document.documentElement as HTMLElement).style.background = 'transparent'
     return () => {
-      document.body.style.background = ''
+      document.body.style.background = prevBody
+      ;(document.documentElement as HTMLElement).style.background = prevHtml
     }
   }, [])
 
