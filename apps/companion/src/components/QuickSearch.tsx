@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { search, type SearchResultItem } from '../api'
 import { invoke } from '@tauri-apps/api/core'
+import { useAppConfig } from '../state/config'
 
 interface QuickSearchProps {
   userId?: string
   onResults?(items: SearchResultItem[]): void
 }
 
-export function QuickSearch({ userId = 'user', onResults }: QuickSearchProps) {
+export function QuickSearch({ userId, onResults }: QuickSearchProps) {
+  const config = useAppConfig()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -20,7 +22,7 @@ export function QuickSearch({ userId = 'user', onResults }: QuickSearchProps) {
     dRef.current = window.setTimeout(async () => {
       setLoading(true); setError(null)
       try {
-        const r = await search(userId, query, 6, {})
+        const r = await search(userId ?? config.userId, query, 6, {})
         setResults(r)
         onResults?.(r)
       } catch (e: any) {
@@ -29,7 +31,7 @@ export function QuickSearch({ userId = 'user', onResults }: QuickSearchProps) {
       } finally { setLoading(false) }
     }, 200)
     return () => { if (dRef.current) window.clearTimeout(dRef.current) }
-  }, [query])
+  }, [query, config.userId, userId])
 
   return (
     <div className="glass-card p-5 flex flex-col gap-4" aria-labelledby="quick-search-heading">

@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { getConfig, subscribeConfig } from './state/config'
 
 // ---- Types ----
 export type IndexerPhase = 'idle' | 'scanning' | 'uploading' | 'error'
@@ -67,6 +68,11 @@ const RESCAN_ON_START = true
 let scanning = false
 let uploading = false
 let pendingRoot: string | null = null
+let currentConfig = getConfig()
+
+subscribeConfig(() => {
+  currentConfig = getConfig()
+})
 
 // ---- Event wiring ----
 export async function initIndexer() {
@@ -167,12 +173,17 @@ async function batchUpload(items: any[]) {
   if (!items.length) return
   uploading = true
   indexerStore.patchNested(s => { s.phase = 'uploading'; s.upload = { queued: items.length, sent: 0, batches: 0 } })
-  const serverUrl = 'http://localhost:8080'
+  const serverUrl = currentConfig.serverUrl.replace(/\/$/, '')
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE)
     try {
       await invoke('sync_index', { serverUrl, payload: { items: batch.map(m => ({
-        user_id: 'user', modality: m.modality, uri: m.path, ts: m.modified, lat: m.lat, lon: m.lon
+        user_id: currentConfig.userId,
+        modality: m.modality,
+        uri: m.path,
+        ts: m.modified,
+        lat: m.lat,
+        lon: m.lon
       })) } })
     } catch (e) {
       console.warn('batch upload failed', e)

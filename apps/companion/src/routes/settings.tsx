@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { indexerStore, setRootPath, startFullScan, stopScan } from '../indexer'
 import { AppShell } from '../components/AppShell'
+import { useAppConfig, updateConfig } from '../state/config'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsApp,
@@ -30,11 +31,17 @@ function SettingsApp() {
   const [scanResults, setScanResults] = useState<ScanResponse | null>(null)
   const [isIndexing, setIsIndexing] = useState(false)
   const [indexProgress, setIndexProgress] = useState(0)
+  const config = useAppConfig()
+  const [configDraft, setConfigDraft] = useState({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
 
   useEffect(() => {
     // Load default folder on startup
     void loadDefaultFolder()
   }, [])
+
+  useEffect(() => {
+    setConfigDraft({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
+  }, [config.serverUrl, config.userId, config.privacyMode])
 
   async function loadDefaultFolder() {
     try {
@@ -97,7 +104,7 @@ function SettingsApp() {
         try {
           const payload = {
             items: chunk.map((item) => ({
-              user_id: 'user',
+              user_id: config.userId,
               modality: item.modality,
               uri: item.path,
               ts: item.modified,
@@ -106,9 +113,9 @@ function SettingsApp() {
               timestamp: item.timestamp,
             })),
           }
-          
+
           await invoke<number>('sync_index', {
-            serverUrl: 'http://localhost:8080',
+            serverUrl: config.serverUrl.replace(/\/$/, ''),
             payload,
           })
           
@@ -167,8 +174,8 @@ function SettingsApp() {
               <h2 className="text-base font-semibold text-white">Folder & Indexing</h2>
               <div className="text-xs text-white/50">Choose a root folder and Taura will gently, continuously index it in the background.</div>
             </div>
-            <div className="flex flex-col gap-2">
-              <label className="text-[11px] uppercase tracking-wide text-white/40">Current Folder</label>
+          <div className="flex flex-col gap-2">
+            <label className="text-[11px] uppercase tracking-wide text-white/40">Current Folder</label>
               <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80 break-all flex items-center justify-between gap-4">
                 <div className="min-w-0 truncate">
                   {idx.pendingRoot && idx.pendingRoot !== idx.rootPath ? (
@@ -253,6 +260,71 @@ function SettingsApp() {
               </div>
             </div>
           </div>
+        </div>
+        <div className="glass-card p-6 flex flex-col gap-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-white">Server & Account</h2>
+              <p className="text-xs text-white/45 mt-1 max-w-md">Configure the Taura backend and user identifier used for syncing and search. Changes apply immediately.</p>
+            </div>
+          </div>
+          <form className="grid gap-4 md:grid-cols-2" onSubmit={(e) => e.preventDefault()}>
+            <div className="flex flex-col gap-1.5 md:col-span-2">
+              <label className="text-[11px] uppercase tracking-wide text-white/40" htmlFor="server-url">Server URL</label>
+              <input
+                id="server-url"
+                className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={configDraft.serverUrl}
+                onChange={(e) => setConfigDraft((prev) => ({ ...prev, serverUrl: e.target.value }))}
+                onBlur={() => updateConfig({ serverUrl: configDraft.serverUrl })}
+                placeholder="https://api.taura.app"
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[11px] uppercase tracking-wide text-white/40" htmlFor="user-id">User ID / Email</label>
+              <input
+                id="user-id"
+                className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                value={configDraft.userId}
+                onChange={(e) => setConfigDraft((prev) => ({ ...prev, userId: e.target.value }))}
+                onBlur={() => updateConfig({ userId: configDraft.userId })}
+                placeholder="you@example.com"
+                autoComplete="off"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-white/40">Privacy Mode</span>
+              <div className="flex gap-3 text-xs">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="privacy-mode"
+                    className="accent-indigo-500"
+                    checked={configDraft.privacyMode === 'hybrid'}
+                    onChange={() => {
+                      setConfigDraft((prev) => ({ ...prev, privacyMode: 'hybrid' }))
+                      updateConfig({ privacyMode: 'hybrid' })
+                    }}
+                  />
+                  <span className="text-white/70">Hybrid (GPU embeddings)</span>
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="radio"
+                    name="privacy-mode"
+                    className="accent-indigo-500"
+                    checked={configDraft.privacyMode === 'strict-local'}
+                    onChange={() => {
+                      setConfigDraft((prev) => ({ ...prev, privacyMode: 'strict-local' }))
+                      updateConfig({ privacyMode: 'strict-local' })
+                    }}
+                  />
+                  <span className="text-white/70">Strict-Local</span>
+                </label>
+              </div>
+            </div>
+          </form>
         </div>
     </AppShell>
   )

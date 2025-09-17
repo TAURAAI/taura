@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { search } from '../api'
 import type { SearchResultItem } from '../api'
+import { useAppConfig } from '../state/config'
 
 export const Route = createFileRoute('/overlay')({
   component: Overlay,
@@ -14,6 +15,7 @@ function Overlay() {
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [searching, setSearching] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
+  const { userId } = useAppConfig()
 
   const debounceRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -29,7 +31,7 @@ function Overlay() {
     debounceRef.current = window.setTimeout(async () => {
       try {
         setSearching(true)
-        const data = await search('user', query, 8, {})
+        const data = await search(userId, query, 8, {})
         setResults(data)
       } catch (err) {
         console.error('overlay search error', err)
@@ -42,7 +44,7 @@ function Overlay() {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current)
     }
-  }, [query])
+  }, [query, userId])
 
   useEffect(() => {
     const prevBody = document.body.style.background

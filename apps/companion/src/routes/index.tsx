@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { AppShell } from '../components/AppShell'
 import { QuickSearch } from '../components/QuickSearch'
 import { RecentItems } from '../components/RecentItems'
+import { fetchStats } from '../api'
+import { useAppConfig } from '../state/config'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -18,15 +20,16 @@ type DashboardStats = {
 function HomeScreen() {
   const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
+  const config = useAppConfig()
 
   useEffect(() => {
     checkServerStatus()
     loadStats()
-  }, [])
+  }, [config.serverUrl, config.userId])
 
   async function checkServerStatus() {
     try {
-      const response = await fetch('http://localhost:8080/healthz')
+      const response = await fetch(`${config.serverUrl.replace(/\/$/, '')}/healthz`)
       setServerStatus(response.ok ? 'online' : 'offline')
     } catch {
       setServerStatus('offline')
@@ -35,9 +38,7 @@ function HomeScreen() {
 
   async function loadStats() {
     try {
-      const response = await fetch('http://localhost:8080/stats?user_id=user')
-      if (!response.ok) throw new Error(`stats ${response.status}`)
-      const data: { media_count: number; embedded_count: number; last_indexed_at?: string | null } = await response.json()
+      const data = await fetchStats(config.userId)
       setStats({
         filesIndexed: data.embedded_count ?? 0,
         totalMedia: data.media_count ?? 0,
