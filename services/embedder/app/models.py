@@ -136,6 +136,24 @@ def load_model(device: str = None) -> None:
             transforms.Normalize(mean=mean, std=std),
         ])
 
+        # Create an adaptive preprocess for small images
+        def _adaptive_preprocess(img):
+            min_dim = min(img.width, img.height)
+            if min_dim < TARGET_IMAGE_SIZE:
+                # For small images, resize to fill the target size (may change aspect ratio slightly)
+                transform = transforms.Compose([
+                    transforms.Resize((TARGET_IMAGE_SIZE, TARGET_IMAGE_SIZE), interpolation=transforms.InterpolationMode.BICUBIC),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=mean, std=std),
+                ])
+            else:
+                # For large images, use the standard resize + crop
+                transform = _preprocess
+            return transform(img)
+        
+        # Replace the global preprocess function
+        globals()['_preprocess'] = _adaptive_preprocess
+
         VISION_MODEL = model
         TEXT_MODEL = model
         TEXT_TOKENIZER = tokenizer
@@ -207,12 +225,20 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     target_side = CROP_SIZE
     for tile_idx, base in enumerate(tiles):
         if enable_tta:
-            try:
-                tile_crops = list(transforms.FiveCrop(target_side)(base))
-                crops.extend([_preprocess(c) for c in tile_crops])
-                logger.debug(f"[MODEL_EMBED_IMAGE] Tile {tile_idx}: created {len(tile_crops)} TTA crops")
-            except Exception as e:
-                logger.warning(f"[MODEL_EMBED_IMAGE] TTA failed for tile {tile_idx}, using single crop: {e}")
+            # Only use TTA if the image is large enough for the crop size
+            min_dim = min(base.width, base.height)
+            if min_dim >= target_side:
+                try:
+                    tile_crops = list(transforms.FiveCrop(target_side)(base))
+                    crops.extend([_preprocess(c) for c in tile_crops])
+                    logger.debug(f"[MODEL_EMBED_IMAGE] Tile {tile_idx}: created {len(tile_crops)} TTA crops")
+                except Exception as e:
+                    logger.warning(f"[MODEL_EMBED_IMAGE] TTA failed for tile {tile_idx}, using single crop: {e}")
+                    crops.append(_preprocess(base))
+            else:
+                # Image too small for TTA, use single crop with adaptive size
+                adaptive_crop_size = min(min_dim, target_side)
+                logger.debug(f"[MODEL_EMBED_IMAGE] Tile {tile_idx}: image too small for TTA ({base.width}x{base.height}), using adaptive crop size {adaptive_crop_size}")
                 crops.append(_preprocess(base))
         else:
             crops.append(_preprocess(base))
