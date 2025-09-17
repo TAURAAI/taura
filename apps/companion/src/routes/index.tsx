@@ -1,6 +1,7 @@
-import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { AppShell } from '../components/AppShell'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -54,25 +55,8 @@ function HomeScreen() {
     }
   }
 
-  const location = useRouterState({ select: s => s.location.pathname })
-  const navClass = (path: string) => `nav-item ${location === path ? 'active' : ''}`
-
   return (
-    <div className="layout-shell">
-      <aside className="sidebar">
-        <div className="px-4 py-4 flex items-center gap-2 text-white/80 font-semibold tracking-tight">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center">
-            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" /></svg>
-          </div>
-          Taura
-        </div>
-        <nav className="mt-2 space-y-1 px-2">
-          <Link to="/" className={navClass('/')}>Dashboard</Link>
-          <Link to="/settings" className={navClass('/settings')}>Settings</Link>
-        </nav>
-        <div className="mt-auto p-4 text-[11px] text-white/35">v0.1.0</div>
-      </aside>
-      <main className="content-area">
+    <AppShell>
         <header className="mb-8">
           <h1 className="heading-xl mb-2">Dashboard</h1>
           <p className="muted text-sm">Overview of your indexed media and system status</p>
@@ -126,7 +110,6 @@ function HomeScreen() {
             </div>
           ))}
         </section>
-      </main>
-    </div>
+    </AppShell>
   )
 }
