@@ -1,7 +1,6 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { Link } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsApp,
@@ -28,6 +27,8 @@ function SettingsApp() {
   const [scanResults, setScanResults] = useState<ScanResponse | null>(null)
   const [isIndexing, setIsIndexing] = useState(false)
   const [indexProgress, setIndexProgress] = useState(0)
+  const location = useRouterState({ select: s => s.location.pathname })
+  const navClass = (path: string) => `nav-item ${location === path ? 'active' : ''}`
 
   useEffect(() => {
     // Load default folder on startup
@@ -126,162 +127,85 @@ function SettingsApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-violet-900">
-      <div className="container mx-auto px-6 py-8">
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <Link to="/" className="text-purple-300 hover:text-white transition-colors">
-              ← Back to Home
-            </Link>
-            <h1 className="text-4xl font-bold text-white">Settings & Configuration</h1>
-            <div></div>
+    <div className="layout-shell">
+      <aside className="sidebar">
+        <div className="px-4 py-4 flex items-center gap-2 text-white/80 font-semibold tracking-tight">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center">
+            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" /></svg>
           </div>
-          <p className="text-xl text-purple-200 text-center">
-            Manage your file indexing and search settings
-          </p>
+          Taura
         </div>
-
-        <div className="max-w-4xl mx-auto space-y-8">
-          
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-8">
-            <h2 className="text-2xl font-semibold text-white mb-6">Folder Selection</h2>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-purple-200 mb-2">Selected Folder:</label>
-                <div className="bg-black/20 rounded-lg p-4 border border-white/10">
-                  <code className="text-white font-mono text-sm break-all">
-                    {selectedFolder || 'No folder selected'}
-                  </code>
+        <nav className="mt-2 space-y-1 px-2">
+          <Link to="/" className={navClass('/')}>Dashboard</Link>
+          <Link to="/settings" className={navClass('/settings')}>Settings</Link>
+        </nav>
+        <div className="mt-auto p-4 text-[11px] text-white/35">v0.1.0</div>
+      </aside>
+      <main className="content-area">
+        <header className="mb-8">
+          <h1 className="heading-xl mb-2">Settings</h1>
+          <p className="muted text-sm">Manage indexing, server, and overlay behavior</p>
+        </header>
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="glass-card p-6 flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-white">Folder Selection</h2>
+            <div className="text-xs text-white/50">Choose which root folder to index.</div>
+            <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80 break-all">{selectedFolder || 'No folder selected'}</div>
+            <button onClick={handlePickFolder} className="btn-outline w-fit">Choose Folder</button>
+          </div>
+          <div className="glass-card p-6 flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-white">File Scanning</h2>
+            <div className="text-xs text-white/50">Scan the current folder to enumerate media prior to indexing.</div>
+            <button onClick={handleScanFolder} disabled={!selectedFolder || isScanning} className="btn-primary w-fit disabled:opacity-40 disabled:cursor-not-allowed">{isScanning ? 'Scanning…' : 'Scan Folder'}</button>
+            {scanResults && (
+              <div className="text-xs text-white/60 space-y-1">
+                <div className="font-medium text-white/80">Found {scanResults.count.toLocaleString()} files</div>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+                  {Object.entries(scanResults.items.reduce((acc, item) => {acc[item.modality] = (acc[item.modality]||0)+1; return acc;}, {} as Record<string, number>)).map(([m,c]) => (
+                    <div key={m} className="flex justify-between"><span className="text-white/40">{m}</span><span className="text-white/70">{c}</span></div>
+                  ))}
                 </div>
               </div>
-              
-              <button
-                onClick={handlePickFolder}
-                className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105"
-              >
-                Choose Different Folder
-              </button>
-            </div>
+            )}
           </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-8">
-            <h2 className="text-2xl font-semibold text-white mb-6">File Scanning</h2>
-            
-            <div className="space-y-4">
-              <button
-                onClick={handleScanFolder}
-                disabled={!selectedFolder || isScanning}
-                className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
-              >
-                {isScanning ? 'Scanning...' : 'Scan Folder'}
-              </button>
-
-              {scanResults && (
-                <div className="bg-black/20 rounded-lg p-4 border border-white/10">
-                  <h3 className="text-white font-semibold mb-2">Scan Results:</h3>
-                  <p className="text-purple-200">
-                    Found {scanResults.count.toLocaleString()} files
-                  </p>
-                  <div className="mt-3 space-y-1">
-                    {Object.entries(
-                      scanResults.items.reduce((acc, item) => {
-                        acc[item.modality] = (acc[item.modality] || 0) + 1
-                        return acc
-                      }, {} as Record<string, number>)
-                    ).map(([modality, count]) => (
-                      <div key={modality} className="text-sm text-purple-300">
-                        {modality}: {count} files
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+          <div className="glass-card p-6 flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-white">Server Indexing</h2>
+            <div className="text-xs text-white/50">Batch upload metadata & request embeddings on the server.</div>
+            <button onClick={handleStartIndexing} disabled={!scanResults || isIndexing} className="btn-primary w-fit disabled:opacity-40 disabled:cursor-not-allowed">{isIndexing ? `Indexing ${indexProgress.toFixed(0)}%` : 'Start Indexing'}</button>
+            {isIndexing && (
+              <div className="w-full h-2 rounded bg-white/10 overflow-hidden">
+                <div className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 transition-all" style={{ width: `${indexProgress}%` }} />
+              </div>
+            )}
           </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-8">
-            <h2 className="text-2xl font-semibold text-white mb-6">Server Indexing</h2>
-            
-            <div className="space-y-4">
-              <button
-                onClick={handleStartIndexing}
-                disabled={!scanResults || isIndexing}
-                className="bg-gradient-to-r from-orange-500 to-red-600 hover:from-orange-600 hover:to-red-700 disabled:from-gray-500 disabled:to-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
-              >
-                {isIndexing ? `Indexing... ${indexProgress.toFixed(0)}%` : 'Start Indexing'}
-              </button>
-
-              {isIndexing && (
-                <div className="bg-black/20 rounded-lg p-4 border border-white/10">
-                  <div className="flex items-center space-x-3">
-                    <div className="flex-1 bg-black/30 rounded-full h-3">
-                      <div 
-                        className="bg-gradient-to-r from-orange-500 to-red-600 h-3 rounded-full transition-all duration-300"
-                        style={{ width: `${indexProgress}%` }}
-                      />
-                    </div>
-                    <span className="text-white text-sm font-mono">
-                      {indexProgress.toFixed(0)}%
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
+          <div className="glass-card p-6 flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-white">Overlay Control</h2>
+            <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
+            <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
           </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-8">
-            <h2 className="text-2xl font-semibold text-white mb-6">Overlay Control</h2>
-            
-            <div className="space-y-4">
-              <p className="text-purple-200">
-                The search overlay is always running in the background. Use the button below to show/hide it.
-              </p>
-              
-              <button
-                onClick={handleShowOverlay}
-                className="bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105"
-              >
-                Toggle Search Overlay
-              </button>
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20 p-8">
-            <h2 className="text-2xl font-semibold text-white mb-6">Advanced Settings</h2>
-            
-            <div className="space-y-6">
-              <div>
-                <label className="block text-purple-200 mb-2">Search Mode</label>
-                <select className="w-full bg-black/20 border border-white/20 rounded-lg px-3 py-2 text-white">
-                  <option>Semantic Search</option>
-                  <option>Keyword Search</option>
-                  <option>Hybrid Mode</option>
+          <div className="glass-card p-6 flex flex-col gap-4 md:col-span-2">
+            <h2 className="text-base font-semibold text-white">Advanced</h2>
+            <div className="grid md:grid-cols-3 gap-4 text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="text-white/40 text-[11px] uppercase tracking-wide">Search Mode</label>
+                <select className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                  <option>Semantic</option>
+                  <option>Keyword</option>
+                  <option>Hybrid</option>
                 </select>
               </div>
-              
-              <div>
-                <label className="block text-purple-200 mb-2">Max Results</label>
-                <input 
-                  type="number" 
-                  defaultValue={10}
-                  className="w-full bg-black/20 border border-white/20 rounded-lg px-3 py-2 text-white"
-                />
+              <div className="flex flex-col gap-1">
+                <label className="text-white/40 text-[11px] uppercase tracking-wide">Max Results</label>
+                <input type="number" defaultValue={10} className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
               </div>
-              
-              <div>
-                <label className="block text-purple-200 mb-2">Server URL</label>
-                <input 
-                  type="text" 
-                  defaultValue="http://localhost:8080"
-                  className="w-full bg-black/20 border border-white/20 rounded-lg px-3 py-2 text-white font-mono text-sm"
-                />
+              <div className="flex flex-col gap-1">
+                <label className="text-white/40 text-[11px] uppercase tracking-wide">Server URL</label>
+                <input type="text" defaultValue="http://localhost:8080" className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
               </div>
             </div>
           </div>
-
         </div>
-      </div>
+      </main>
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -48,172 +48,76 @@ function HomeScreen() {
     }
   }
 
+  const location = useRouterState({ select: s => s.location.pathname })
+  const navClass = (path: string) => `nav-item ${location === path ? 'active' : ''}`
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900">
-      <div className="container mx-auto px-6 py-12">
-        
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mb-8">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
+    <div className="layout-shell">
+      <aside className="sidebar">
+        <div className="px-4 py-4 flex items-center gap-2 text-white/80 font-semibold tracking-tight">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-fuchsia-500 flex items-center justify-center">
+            <svg className="w-4 h-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" /></svg>
           </div>
-          
-          <h1 className="text-6xl font-bold text-white mb-4">
-            Taura
-          </h1>
-          <p className="text-2xl text-blue-200 mb-8">
-            Intelligent File Search & Recall
-          </p>
-          <p className="text-lg text-purple-300 max-w-2xl mx-auto">
-            Search your files using natural language. Find photos, documents, and media 
-            by describing what you're looking for, not just filenames.
-          </p>
+          Taura
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+        <nav className="mt-2 space-y-1 px-2">
+          <Link to="/" className={navClass('/')}>Dashboard</Link>
+          <Link to="/settings" className={navClass('/settings')}>Settings</Link>
+        </nav>
+        <div className="mt-auto p-4 text-[11px] text-white/35">v0.1.0</div>
+      </aside>
+      <main className="content-area">
+        <header className="mb-8">
+          <h1 className="heading-xl mb-2">Dashboard</h1>
+          <p className="muted text-sm">Overview of your indexed media and system status</p>
+        </header>
+        <div className="grid gap-6 md:grid-cols-3 mb-10">
+          <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Files Indexed</h3>
-              <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
-                <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-              </div>
+              <span className="text-xs uppercase tracking-wide text-white/50">Files Indexed</span>
+              <span className="metric-chip">{serverStatus}</span>
             </div>
-            <p className="text-3xl font-bold text-white mb-2">
-              {stats.filesIndexed.toLocaleString()}
-            </p>
-            <p className="text-blue-300 text-sm">
-              {stats.lastScan ? `Last scan: ${stats.lastScan}` : 'No scans yet'}
-            </p>
+            <div className="text-4xl font-semibold mb-1">{stats.filesIndexed.toLocaleString()}</div>
+            <div className="text-xs text-white/40">{stats.lastScan ? `Last scan: ${stats.lastScan}` : 'No scan yet'}</div>
           </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
+          <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Server Status</h3>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                serverStatus === 'online' ? 'bg-green-500/20' : 
-                serverStatus === 'offline' ? 'bg-red-500/20' : 'bg-yellow-500/20'
-              }`}>
-                <div className={`w-3 h-3 rounded-full ${
-                  serverStatus === 'online' ? 'bg-green-400' : 
-                  serverStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400'
-                }`} />
-              </div>
+              <span className="text-xs uppercase tracking-wide text-white/50">Server</span>
             </div>
-            <p className="text-3xl font-bold text-white mb-2 capitalize">
-              {serverStatus}
-            </p>
-            <p className="text-blue-300 text-sm">
-              {serverStatus === 'online' ? 'Ready for search' : 
-               serverStatus === 'offline' ? 'Backend unavailable' : 'Checking connection'}
-            </p>
+            <div className="text-3xl font-semibold mb-1 capitalize">{serverStatus}</div>
+            <div className="text-xs text-white/40">Health endpoint polled</div>
           </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Search Mode</h3>
-              <div className="w-12 h-12 bg-purple-500/20 rounded-full flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white mb-2">
-              Semantic
-            </p>
-            <p className="text-blue-300 text-sm">
-              AI-powered understanding
-            </p>
+          <div className="glass-card p-5">
+            <div className="flex items-center justify-between mb-4"><span className="text-xs uppercase tracking-wide text-white/50">Mode</span></div>
+            <div className="text-3xl font-semibold mb-1">Semantic</div>
+            <div className="text-xs text-white/40">Vector recall active</div>
           </div>
         </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          <div className="bg-gradient-to-br from-blue-500/10 to-purple-600/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
-            <div className="flex items-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mr-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white">Search Overlay</h3>
-                <p className="text-blue-200">Always-on search interface</p>
-              </div>
-            </div>
-            <p className="text-purple-200 mb-6">
-              Access the floating search overlay to quickly find your files while working.
-            </p>
-            <button
-              onClick={handleQuickOverlay}
-              className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105"
-            >
-              Open Search Overlay
-            </button>
+        <div className="grid md:grid-cols-2 gap-6 mb-10">
+          <div className="glass-card p-6 flex flex-col">
+            <h2 className="text-lg font-medium mb-2 text-white">Search Overlay</h2>
+            <p className="text-sm text-white/50 mb-4">Launch the universal search palette anywhere.</p>
+            <button onClick={handleQuickOverlay} className="btn-primary w-fit">Open Overlay</button>
           </div>
-
-          <div className="bg-gradient-to-br from-green-500/10 to-emerald-600/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
-            <div className="flex items-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center mr-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white">Configuration</h3>
-                <p className="text-green-200">Manage settings & indexing</p>
-              </div>
-            </div>
-            <p className="text-green-200 mb-6">
-              Configure folders to index, manage search settings, and control the indexing process.
-            </p>
-            <Link to="/settings">
-              <button className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105">
-                Open Settings
-              </button>
-            </Link>
+          <div className="glass-card p-6 flex flex-col">
+            <h2 className="text-lg font-medium mb-2 text-white">Index Settings</h2>
+            <p className="text-sm text-white/50 mb-4">Configure folders, filters and privacy options.</p>
+            <Link to="/settings" className="btn-outline w-fit">Open Settings</Link>
           </div>
         </div>
-
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-white mb-4">How It Works</h2>
-          <p className="text-blue-200 text-lg mb-8">Taura understands your files like you do</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
+        <div className="divider" />
+        <section className="grid md:grid-cols-3 gap-6">
+          {[{
+            title:'Smart Indexing', desc:'Analyze photos, documents & media automatically.'},
+            {title:'Natural Language', desc:'Describe what you remember—not filenames.'},
+            {title:'Instant Results', desc:'Low-latency vector retrieval with ANN.'}].map(b => (
+            <div key={b.title} className="glass-card p-5">
+              <h3 className="text-sm font-semibold mb-1 text-white/90">{b.title}</h3>
+              <p className="text-xs text-white/50 leading-relaxed">{b.desc}</p>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Smart Indexing</h3>
-            <p className="text-purple-300">Automatically analyzes your photos, documents, and media files</p>
-          </div>
-
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Natural Language</h3>
-            <p className="text-purple-300">Search by describing what you remember, not exact filenames</p>
-          </div>
-
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Instant Results</h3>
-            <p className="text-purple-300">Get relevant results in milliseconds with AI-powered search</p>
-          </div>
-        </div>
-      </div>
+          ))}
+        </section>
+      </main>
     </div>
   )
 }
