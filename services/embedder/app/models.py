@@ -46,19 +46,21 @@ MODEL_ID: str = os.environ.get(
 
 TARGET_IMAGE_SIZE: int = int(os.environ.get("VISION_SIZE", "336"))
 CROP_SIZE: int = int(os.environ.get("TTA_CROP_SIZE", os.environ.get("VISION_SIZE", "336")))
+REQUIRE_CUDA: bool = os.environ.get("REQUIRE_CUDA", "1") != "0"
 
 
 def _get_device() -> str:
     if torch.cuda.is_available():
         preferred = os.environ.get("CUDA_DEVICE", "cuda")
-        try:
-            if preferred.startswith("cuda:"):
-                index = int(preferred.split(":", 1)[1])
-                torch.cuda.set_device(index)
-        except Exception:
-            pass
+        if preferred.startswith("cuda:"):
+            index = int(preferred.split(":", 1)[1])
+            if index >= torch.cuda.device_count():
+                raise RuntimeError(f"requested {preferred} but only {torch.cuda.device_count()} cuda devices present")
+            torch.cuda.set_device(index)
         return preferred
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():  # Apple Silicon
+    if REQUIRE_CUDA:
+        raise RuntimeError("CUDA required but not available; set REQUIRE_CUDA=0 to allow CPU fallback")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():  # Apple Silicon fallback
         return "mps"
     return "cpu"
 
@@ -250,7 +252,7 @@ def embed_text(text: str) -> List[float]:
         if hasattr(tokens, "to"):
             tokens = tokens.to(VISION_DEVICE)  # type: ignore
         elif isinstance(tokens, (list, tuple)):
-            tokens = torch.tensor(tokens, device=VISION_DEVICE)
+            tokens = torch.tensor(tokens, device=VISION_DEVICE, dtype=torch.long)
         amp_ctx = (
             torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
             if AMP_DTYPE is not None and VISION_DEVICE and VISION_DEVICE.startswith("cuda")

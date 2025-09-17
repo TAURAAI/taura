@@ -39,6 +39,7 @@ docker run --gpus all -p 9000:9000 embedder:dev
 - `CUDA_DEVICE` (e.g. `cuda:0` to pin to a specific GPU)
 - `ENABLE_TTA` (`1` to run 5-crop + panorama tiling, `0` to disable for latency-sensitive paths)
 - `PANORAMA_MAX_RATIO` (split very wide images into tiles; default `2.6`)
+- `REQUIRE_CUDA` (`1` by default; set to `0` only if CPU/MPS fallback is acceptable)
 - Models hosted on Hugging Face may require a valid `HF_TOKEN`; export it inside the container (`export HF_TOKEN=...`) before starting the server if you see 401 errors.
 
 ## TODO (Upgrade to Production)
