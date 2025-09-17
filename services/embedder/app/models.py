@@ -233,7 +233,8 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     with torch.no_grad():
         with amp_ctx:
             emb = VISION_MODEL.encode_image(batch)  # type: ignore  # (N, D)
-            emb = emb.mean(0)                       # TTA average -> (D,)
+            emb = F.normalize(emb, dim=-1)
+            emb = emb.mean(0)
         emb = _project_embedding(emb)
     return emb.cpu().tolist()
 
@@ -260,6 +261,7 @@ def embed_text(text: str) -> List[float]:
         )
         with amp_ctx:
             emb = TEXT_MODEL.encode_text(tokens)   # type: ignore  # (B, D)
+            emb = F.normalize(emb, dim=-1)
             v = emb[0]
         v = _project_embedding(v)
     return v.cpu().tolist()

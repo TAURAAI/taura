@@ -11,6 +11,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type SearchRequest struct {
@@ -209,13 +210,25 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	defer rows.Close()
 	results := make([]SearchResult, 0, req.TopK)
+	var bestScore float32
 	for rows.Next() {
 		var r SearchResult
 		if err := rows.Scan(&r.MediaID, &r.Score, &r.ThumbURL, &r.URI, &r.TS, &r.Lat, &r.Lon, &r.Modality); err != nil {
 			log.Printf("scan error: %v", err)
 			continue
 		}
+		if len(results) == 0 || r.Score > bestScore {
+			bestScore = r.Score
+		}
 		results = append(results, r)
+	}
+	if len(results) == 0 || bestScore < 0.2 {
+		keywords := tokenizeQuery(req.Text)
+		if fb, err := keywordFallback(ctx, database, userID, keywords, req.TopK); err != nil {
+			log.Printf("keyword fallback error: %v", err)
+		} else if len(fb) > 0 {
+			results = fb
+		}
 	}
 	return c.JSON(SearchResponse{Results: results})
 }
@@ -225,4 +238,55 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func tokenizeQuery(q string) []string {
+	q = strings.ToLower(q)
+	parts := strings.FieldsFunc(q, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) >= 2 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func keywordFallback(ctx context.Context, database *db.Database, userID string, tokens []string, limit int) ([]SearchResult, error) {
+	params := []interface{}{userID}
+	where := strings.Builder{}
+	if len(tokens) > 0 {
+		clauses := make([]string, 0, len(tokens))
+		for _, tok := range tokens {
+			params = append(params, "%"+tok+"%")
+			idx := len(params)
+			clauses = append(clauses, fmt.Sprintf("(m.uri ILIKE $%d OR COALESCE(m.album,'') ILIKE $%d OR COALESCE(m.source,'') ILIKE $%d)", idx, idx, idx))
+		}
+		where.WriteString(" AND (")
+		where.WriteString(strings.Join(clauses, " OR "))
+		where.WriteString(")")
+	}
+
+	params = append(params, limit)
+	sql := fmt.Sprintf(`SELECT m.id, 0.0 AS score, COALESCE(m.thumb_url,''), m.uri,
+		COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality
+		FROM media m
+		WHERE m.user_id=$1 AND m.deleted=false%s
+		ORDER BY m.ts DESC NULLS LAST, m.uri ASC
+		LIMIT $%d`, where.String(), len(params))
+
+	rows, err := database.Pool.Query(ctx, sql, params...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	results := make([]SearchResult, 0, limit)
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.MediaID, &r.Score, &r.ThumbURL, &r.URI, &r.TS, &r.Lat, &r.Lon, &r.Modality); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, nil
 }
