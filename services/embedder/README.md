@@ -2,7 +2,7 @@
 
 FastAPI-based embedding microservice (placeholder models).
 
-Default build loads the SigLIP ViT-L/14 checkpoint (HF `hf-hub:timm/ViT-L-14-SigLIP-384`) via OpenCLIP with 576px preprocessing.
+Default build ships with EVA02-CLIP L/14@336 (`hf-hub:timm/eva02_large_patch14_clip_336.merged2b_s6b_b61k`) via OpenCLIP, 336 px resize/crop, and cosine-normalised 768-d outputs tuned for pgvector.
 
 ## Endpoints
 - GET `/healthz` -> health status
@@ -31,9 +31,14 @@ docker run --gpus all -p 9000:9000 embedder:dev
 
 ## Environment
 
-- `VISION_MODEL_ID` (default `hf-hub:timm/ViT-L-14-SigLip-384`)
-- `VISION_SIZE` (default `576`)
-- `TTA_CROP_SIZE` (defaults to `VISION_SIZE`)
+- `VISION_MODEL_ID` (default `hf-hub:timm/eva02_large_patch14_clip_336.merged2b_s6b_b61k`)
+- `VISION_SIZE` (default `336`, override to upsample/downsample)
+- `TTA_CROP_SIZE` (defaults to `VISION_SIZE`; set smaller to reduce 5-crop cost or equal for max accuracy)
+- `MODEL_PRECISION` (`fp16` default on CUDA, accepts `bf16`, `fp32`)
+- `MATMUL_PRECISION` (`high` by default; set to `medium` for slightly faster matmul with modest quality drop)
+- `CUDA_DEVICE` (e.g. `cuda:0` to pin to a specific GPU)
+- `ENABLE_TTA` (`1` to run 5-crop + panorama tiling, `0` to disable for latency-sensitive paths)
+- `PANORAMA_MAX_RATIO` (split very wide images into tiles; default `2.6`)
 - Models hosted on Hugging Face may require a valid `HF_TOKEN`; export it inside the container (`export HF_TOKEN=...`) before starting the server if you see 401 errors.
 
 ## TODO (Upgrade to Production)

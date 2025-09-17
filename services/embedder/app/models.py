@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torchvision import transforms
 from PIL import Image
 from typing import List, Optional, Callable
+import contextlib
 import io
 import os
 
@@ -35,6 +36,7 @@ VISION_DEVICE: Optional[str] = None
 TEXT_MODEL: Optional[nn.Module] = None
 TEXT_TOKENIZER: Optional[Callable] = None
 TARGET_DIM: Optional[int] = None
+AMP_DTYPE: Optional[torch.dtype] = None
 
 # Default to EVA02-CLIP L/14 @336 (native 768-d)
 MODEL_ID: str = os.environ.get(
@@ -48,7 +50,14 @@ CROP_SIZE: int = int(os.environ.get("TTA_CROP_SIZE", os.environ.get("VISION_SIZE
 
 def _get_device() -> str:
     if torch.cuda.is_available():
-        return "cuda"
+        preferred = os.environ.get("CUDA_DEVICE", "cuda")
+        try:
+            if preferred.startswith("cuda:"):
+                index = int(preferred.split(":", 1)[1])
+                torch.cuda.set_device(index)
+        except Exception:
+            pass
+        return preferred
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():  # Apple Silicon
         return "mps"
     return "cpu"
@@ -60,12 +69,21 @@ def load_model(device: str = None) -> None:
     Synchronizes preprocess, image size, tokenizer, and target embedding dim.
     """
     global VISION_MODEL, VISION_DEVICE, TEXT_MODEL, TEXT_TOKENIZER
-    global _preprocess, TARGET_DIM, TARGET_IMAGE_SIZE, CROP_SIZE
+    global _preprocess, TARGET_DIM, TARGET_IMAGE_SIZE, CROP_SIZE, AMP_DTYPE
 
     if VISION_MODEL is not None:
         return
 
     VISION_DEVICE = device or _get_device()
+    if VISION_DEVICE.startswith("cuda"):
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
+        try:
+            torch.set_float32_matmul_precision(os.environ.get("MATMUL_PRECISION", "high"))
+        except Exception:
+            torch.set_float32_matmul_precision("high")
+    else:
+        AMP_DTYPE = None
 
     if not _HAS_OPEN_CLIP:
         raise RuntimeError("open_clip is not installed. `pip install -U open-clip-torch`")
@@ -74,6 +92,22 @@ def load_model(device: str = None) -> None:
         # Load model + its recommended preprocess (includes mean/std & 336px sizing for this checkpoint)
         model, preprocess = open_clip.create_model_from_pretrained(MODEL_ID, device=VISION_DEVICE)
         model.eval()
+
+        precision = os.environ.get("MODEL_PRECISION", "fp16").lower()
+        if VISION_DEVICE.startswith("cuda"):
+            if precision == "bf16":
+                AMP_DTYPE = torch.bfloat16
+            elif precision == "fp32":
+                AMP_DTYPE = None
+            else:
+                AMP_DTYPE = torch.float16
+        else:
+            AMP_DTYPE = None
+
+        if AMP_DTYPE is not None:
+            model = model.to(device=VISION_DEVICE, dtype=AMP_DTYPE)
+        else:
+            model = model.to(device=VISION_DEVICE)
 
         # --- tokenizer with fallback (some HF names aren't recognized as-is) ---
         try:
@@ -142,6 +176,7 @@ def _project_embedding(vec: torch.Tensor) -> torch.Tensor:
     """Ensure embeddings match TARGET_DIM and are L2-normalised."""
     if TARGET_DIM is None:
         raise RuntimeError("model not initialised; call load_model() first")
+    vec = vec.float()
     if vec.ndim != 1:
         raise ValueError(f"expected 1D embedding tensor, got shape {tuple(vec.shape)}")
     current = vec.shape[0]
@@ -186,9 +221,17 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
         raise ValueError("no crops produced")
 
     batch = torch.stack(crops).to(VISION_DEVICE)
+    if AMP_DTYPE is not None:
+        batch = batch.to(dtype=AMP_DTYPE)
+    amp_ctx = (
+        torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
+        if AMP_DTYPE is not None and VISION_DEVICE and VISION_DEVICE.startswith("cuda")
+        else contextlib.nullcontext()
+    )
     with torch.no_grad():
-        emb = VISION_MODEL.encode_image(batch)  # type: ignore  # (N, D)
-        emb = emb.mean(0)                       # TTA average -> (D,)
+        with amp_ctx:
+            emb = VISION_MODEL.encode_image(batch)  # type: ignore  # (N, D)
+            emb = emb.mean(0)                       # TTA average -> (D,)
         emb = _project_embedding(emb)
     return emb.cpu().tolist()
 
@@ -206,7 +249,15 @@ def embed_text(text: str) -> List[float]:
         # Some tokenizers return tensors, some return lists; ensure device placement
         if hasattr(tokens, "to"):
             tokens = tokens.to(VISION_DEVICE)  # type: ignore
-        emb = TEXT_MODEL.encode_text(tokens)   # type: ignore  # (B, D)
-        v = emb[0]
+        elif isinstance(tokens, (list, tuple)):
+            tokens = torch.tensor(tokens, device=VISION_DEVICE)
+        amp_ctx = (
+            torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
+            if AMP_DTYPE is not None and VISION_DEVICE and VISION_DEVICE.startswith("cuda")
+            else contextlib.nullcontext()
+        )
+        with amp_ctx:
+            emb = TEXT_MODEL.encode_text(tokens)   # type: ignore  # (B, D)
+            v = emb[0]
         v = _project_embedding(v)
     return v.cpu().tolist()

@@ -6,6 +6,7 @@ import (
 	"github.com/TAURAAI/taura/api-gateway/internal/db"
 	"github.com/TAURAAI/taura/api-gateway/internal/embed"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"log"
 	"math"
 	"strings"
@@ -39,15 +40,20 @@ func PostSearch(c *fiber.Ctx) error {
 	if err := c.BodyParser(&req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if req.TopK == 0 {
+	if req.TopK <= 0 {
 		req.TopK = 10
+	}
+	if req.TopK > 200 {
+		req.TopK = 200
 	}
 	if req.Text == "" {
 		return c.JSON(SearchResponse{Results: []SearchResult{}})
 	}
 
+	ctx := context.Background()
+
 	start := time.Now()
-	vec, err := embed.Text(context.Background(), req.Text)
+	vec, err := embed.Text(ctx, req.Text)
 	if err != nil {
 		log.Printf("embedder text error text='%s' err=%v", truncate(req.Text, 80), err)
 		return fiber.NewError(fiber.StatusBadGateway, "embedder error")
@@ -65,6 +71,20 @@ func PostSearch(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "empty embedding")
 	}
 
+	userID := strings.TrimSpace(req.UserID)
+	if userID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "user_id required")
+	}
+	if _, err := uuid.Parse(userID); err != nil {
+		var resolved string
+		errLookup := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1 LIMIT 1`, userID).Scan(&resolved)
+		if errLookup != nil {
+			log.Printf("search user resolve failed user=%s err=%v", userID, errLookup)
+			return c.JSON(SearchResponse{Results: []SearchResult{}})
+		}
+		userID = resolved
+	}
+
 	filters := req.Filters
 	if filters == nil {
 		filters = map[string]interface{}{}
@@ -76,7 +96,7 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	vectorLiteral := "[" + strings.Join(parts, ",") + "]"
 
-	params := []interface{}{vectorLiteral, req.UserID}
+	params := []interface{}{vectorLiteral, userID}
 	paramIdx := len(params) + 1
 	var clause strings.Builder
 
@@ -182,7 +202,7 @@ func PostSearch(c *fiber.Ctx) error {
 		ORDER BY v.embedding <=> $1::vector ASC
 		LIMIT $%d`, clause.String(), limitIdx)
 
-	rows, err := database.Pool.Query(context.Background(), sql, params...)
+	rows, err := database.Pool.Query(ctx, sql, params...)
 	if err != nil {
 		log.Printf("search query error: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
