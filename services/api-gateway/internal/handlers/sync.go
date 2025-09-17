@@ -160,7 +160,7 @@ func PostSync(c *fiber.Ctx) error {
 			}
 			parts := make([]string, len(vec))
 			for k, f := range vec {
-				parts[k] = fmt.Sprintf("%.6f", f)
+				parts[k] = fmt.Sprintf("%.9f", f)
 			}
 			vectorLiteral := "[" + strings.Join(parts, ",") + "]"
 			if _, insErr := database.Pool.Exec(ctx, `INSERT INTO media_vecs (media_id, embedding) VALUES ($1, $2::vector)

@@ -7,13 +7,15 @@ COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
 COPY app ./app
 
-# Pre-download the model
-RUN python3 -c "from app.models import load_model; load_model()"
-
-# Set environment variables
+# Set environment variables (before warm-up to ensure correct checkpoint is fetched)
+ENV VISION_MODEL_ID="hf-hub:google/siglip-so400m-patch14-384"
 ENV VISION_SIZE="384"
 ENV ENABLE_TTA="1"
 ENV PANORAMA_MAX_RATIO="2.6"
+ENV MODEL_PRECISION="bf16"
+
+# Pre-download the model
+RUN python3 -c "from app.models import load_model; load_model()"
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 9000
