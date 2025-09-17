@@ -61,6 +61,7 @@ func main() {
 	app.Options("/search", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	app.Post("/search", handlers.PostSearch)
 	app.Post("/sync", handlers.PostSync)
+	app.Get("/stats", handlers.GetStats)
 
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }

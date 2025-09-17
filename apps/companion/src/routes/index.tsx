@@ -6,8 +6,14 @@ export const Route = createFileRoute('/')({
   component: HomeScreen,
 })
 
+type DashboardStats = {
+  filesIndexed: number
+  totalMedia: number
+  lastIndexed: string | null
+}
+
 function HomeScreen() {
-  const [stats, setStats] = useState({ filesIndexed: 0, lastScan: null as string | null })
+  const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
 
   useEffect(() => {
@@ -26,17 +32,17 @@ function HomeScreen() {
 
   async function loadStats() {
     try {
-      const defaultPath = await invoke<string>('get_default_folder')
-      const result = await invoke<{ count: number }>('scan_folder', {
-        path: defaultPath,
-        maxSamples: 0,
-      })
-      setStats({ 
-        filesIndexed: result.count, 
-        lastScan: new Date().toLocaleDateString() 
+      const response = await fetch('http://localhost:8080/stats?user_id=user')
+      if (!response.ok) throw new Error(`stats ${response.status}`)
+      const data: { media_count: number; embedded_count: number; last_indexed_at?: string | null } = await response.json()
+      setStats({
+        filesIndexed: data.embedded_count ?? 0,
+        totalMedia: data.media_count ?? 0,
+        lastIndexed: data.last_indexed_at ? new Date(data.last_indexed_at).toLocaleString() : null,
       })
     } catch (e) {
       console.error('Failed to load stats:', e)
+      setStats({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
     }
   }
 
@@ -78,7 +84,10 @@ function HomeScreen() {
               <span className="metric-chip">{serverStatus}</span>
             </div>
             <div className="text-4xl font-semibold mb-1">{stats.filesIndexed.toLocaleString()}</div>
-            <div className="text-xs text-white/40">{stats.lastScan ? `Last scan: ${stats.lastScan}` : 'No scan yet'}</div>
+            <div className="text-xs text-white/40">
+              {stats.lastIndexed ? `Last indexed: ${stats.lastIndexed}` : 'No embeddings yet'}
+            </div>
+            <div className="text-[11px] text-white/35 mt-1">Total media detected: {stats.totalMedia.toLocaleString()}</div>
           </div>
           <div className="glass-card p-5">
             <div className="flex items-center justify-between mb-4">
