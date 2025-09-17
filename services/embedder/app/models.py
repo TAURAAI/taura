@@ -354,12 +354,22 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
         raise ValueError("no crops produced")
 
     prep_elapsed = (time.perf_counter() - start) * 1000.0
-    batch = torch.stack(crops)
+    batch = torch.stack(crops).contiguous(memory_format=torch.channels_last)
+    transfer_ms = 0.0
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
         batch = batch.pin_memory()
-    batch = batch.to(VISION_DEVICE, non_blocking=True)
-    if AMP_DTYPE is not None:
-        batch = batch.to(dtype=AMP_DTYPE)
+        transfer_start = time.perf_counter()
+        transfer_stream = torch.cuda.Stream(device=torch.cuda.current_device())
+        with torch.cuda.stream(transfer_stream):
+            batch = batch.to(VISION_DEVICE, non_blocking=True)
+            if AMP_DTYPE is not None:
+                batch = batch.to(dtype=AMP_DTYPE, non_blocking=True)
+        torch.cuda.current_stream().wait_stream(transfer_stream)
+        transfer_ms = (time.perf_counter() - transfer_start) * 1000.0
+    else:
+        batch = batch.to(VISION_DEVICE)
+        if AMP_DTYPE is not None:
+            batch = batch.to(dtype=AMP_DTYPE)
 
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
         torch.cuda.synchronize()
@@ -381,12 +391,13 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
 
     result = emb.cpu().tolist()
     logger.info(
-        "[MODEL_EMBED_IMAGE] success crops=%d tiles=%d scales=%d prep_ms=%.2f infer_ms=%.2f total_ms=%.2f "
+        "[MODEL_EMBED_IMAGE] success crops=%d tiles=%d scales=%d prep_ms=%.2f h2d_ms=%.2f infer_ms=%.2f total_ms=%.2f "
         "norm=%.6f device=%s gpu=%s",
         len(crops),
         len(tiles),
         len(IMAGE_SCALE_FACTORS),
         prep_elapsed,
+        transfer_ms,
         infer_elapsed,
         total_elapsed,
         sum(x * x for x in result) ** 0.5,
@@ -420,8 +431,17 @@ def embed_text(text: str) -> List[float]:
     tokenize_start = time.perf_counter()
     with torch.no_grad():
         tokens = TEXT_TOKENIZER([text], context_length=ctx_len)  # type: ignore
+        transfer_ms = 0.0
         if hasattr(tokens, "to"):
-            tokens = tokens.to(VISION_DEVICE, non_blocking=True)  # type: ignore
+            if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
+                transfer_start = time.perf_counter()
+                copy_stream = torch.cuda.Stream(device=torch.cuda.current_device())
+                with torch.cuda.stream(copy_stream):
+                    tokens = tokens.to(VISION_DEVICE, non_blocking=True)  # type: ignore
+                torch.cuda.current_stream().wait_stream(copy_stream)
+                transfer_ms = (time.perf_counter() - transfer_start) * 1000.0
+            else:
+                tokens = tokens.to(VISION_DEVICE)  # type: ignore
         elif isinstance(tokens, (list, tuple)):
             tokens = torch.tensor(tokens, device=VISION_DEVICE, dtype=torch.long)
         tokenize_ms = (time.perf_counter() - tokenize_start) * 1000.0
@@ -445,9 +465,10 @@ def embed_text(text: str) -> List[float]:
     total_ms = (time.perf_counter() - start) * 1000.0
     result = v.cpu().tolist()
     logger.info(
-        "[MODEL_EMBED_TEXT] success tokens=%s tokenize_ms=%.2f infer_ms=%.2f total_ms=%.2f norm=%.6f device=%s gpu=%s",
+        "[MODEL_EMBED_TEXT] success tokens=%s tokenize_ms=%.2f h2d_ms=%.2f infer_ms=%.2f total_ms=%.2f norm=%.6f device=%s gpu=%s",
         getattr(tokens, "shape", None),
         tokenize_ms,
+        transfer_ms,
         infer_ms,
         total_ms,
         sum(x * x for x in result) ** 0.5,
