@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
+from torchvision.transforms import functional as TF
 from PIL import Image
-from typing import List, Optional, Callable
+from typing import Callable, Dict, List, Optional, Tuple
 import contextlib
 import io
 import logging
@@ -42,6 +43,10 @@ AMP_DTYPE: Optional[torch.dtype] = None
 IMAGE_SCALE_FACTORS: List[float] = [1.0]
 
 logger = logging.getLogger("embedder.models")
+
+NORM_MEAN_VALUES: List[float] = [0.48145466, 0.4578275, 0.40821073]
+NORM_STD_VALUES: List[float] = [0.26862954, 0.26130258, 0.27577711]
+_NORM_CACHE: Dict[Tuple[str, torch.dtype], Tuple[torch.Tensor, torch.Tensor]] = {}
 
 # ✅ use the TIMM-converted SigLIP checkpoint that includes open_clip_config.json
 MODEL_ID: str = os.environ.get(
@@ -86,6 +91,20 @@ def _format_gpu_state() -> str:
         )
     except Exception as exc:  # pragma: no cover
         return f"cuda (introspection error: {exc})"
+
+
+def _get_norm_tensors(device: torch.device, dtype: torch.dtype) -> Tuple[torch.Tensor, torch.Tensor]:
+    key = (str(device), dtype)
+    cached = _NORM_CACHE.get(key)
+    if cached is None:
+        mean = torch.tensor(NORM_MEAN_VALUES, dtype=torch.float32, device=device).view(1, 3, 1, 1)
+        std = torch.tensor(NORM_STD_VALUES, dtype=torch.float32, device=device).view(1, 3, 1, 1)
+        if dtype != torch.float32:
+            mean = mean.to(dtype)
+            std = std.to(dtype)
+        _NORM_CACHE[key] = (mean, std)
+        cached = (mean, std)
+    return cached
 
 
 def load_model(device: str = None) -> None:
@@ -188,6 +207,10 @@ def load_model(device: str = None) -> None:
                     mean = list(t.mean)
                     std = list(t.std)
                     break
+        global NORM_MEAN_VALUES, NORM_STD_VALUES
+        NORM_MEAN_VALUES = mean
+        NORM_STD_VALUES = std
+        _NORM_CACHE.clear()
         # Base (original) preprocessing pipeline retained separately to avoid recursion
         base_preprocess = transforms.Compose([
             transforms.Resize(TARGET_IMAGE_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
@@ -303,49 +326,82 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     crops: List[torch.Tensor] = []
     target_side = CROP_SIZE
     max_multi_dim = int(os.environ.get("MULTI_SCALE_MAX_DIM", "1536"))
+    device_str = VISION_DEVICE or "cpu"
+    device = torch.device(device_str)
+    use_cuda = device.type == "cuda"
+    norm_mean, norm_std = _get_norm_tensors(device, torch.float32)
+    target_dtype = AMP_DTYPE if AMP_DTYPE is not None and use_cuda else torch.float32
+
+    def _make_crops(tensor: torch.Tensor, crop_size: int, tta: bool) -> List[torch.Tensor]:
+        _, _, h, w = tensor.shape
+        outs: List[torch.Tensor] = []
+        if tta and h >= crop_size and w >= crop_size:
+            outs.append(tensor[..., :crop_size, :crop_size].contiguous())
+            outs.append(tensor[..., :crop_size, w - crop_size :].contiguous())
+            outs.append(tensor[..., h - crop_size :, :crop_size].contiguous())
+            outs.append(tensor[..., h - crop_size :, w - crop_size :].contiguous())
+            top = max((h - crop_size) // 2, 0)
+            left = max((w - crop_size) // 2, 0)
+            center = tensor[..., top : top + crop_size, left : left + crop_size]
+            if center.shape[-2:] != (crop_size, crop_size):
+                center = F.interpolate(center, size=(crop_size, crop_size), mode="bicubic", align_corners=False)
+            outs.append(center.contiguous())
+        else:
+            top = max((h - crop_size) // 2, 0)
+            left = max((w - crop_size) // 2, 0)
+            crop = tensor[..., top : top + crop_size, left : left + crop_size]
+            if crop.shape[-2:] != (crop_size, crop_size):
+                crop = F.interpolate(crop, size=(crop_size, crop_size), mode="bicubic", align_corners=False)
+            outs.append(crop.contiguous())
+        return outs
+
+    transfer_ms = 0.0
     for tile_idx, base in enumerate(tiles):
+        base_tensor = TF.pil_to_tensor(base).to(torch.float32).unsqueeze(0) / 255.0
+        base_tensor = base_tensor.contiguous(memory_format=torch.channels_last)
+        if use_cuda:
+            base_tensor = base_tensor.pin_memory()
+            transfer_start = time.perf_counter()
+            copy_stream = torch.cuda.Stream(device=torch.cuda.current_device())
+            with torch.cuda.stream(copy_stream):
+                base_tensor_device = base_tensor.to(device, non_blocking=True)
+            torch.cuda.current_stream().wait_stream(copy_stream)
+            transfer_ms += (time.perf_counter() - transfer_start) * 1000.0
+        else:
+            base_tensor_device = base_tensor.to(device)
+        base_tensor_device = base_tensor_device.contiguous(memory_format=torch.channels_last)
+        base_h = base_tensor_device.shape[-2]
+        base_w = base_tensor_device.shape[-1]
+
         for scale_factor in IMAGE_SCALE_FACTORS:
-            work = base
+            scaled = base_tensor_device
             if abs(scale_factor - 1.0) > 1e-3:
-                new_w = max(1, min(int(round(base.width * scale_factor)), max_multi_dim))
-                new_h = max(1, min(int(round(base.height * scale_factor)), max_multi_dim))
-                if new_w != base.width or new_h != base.height:
-                    work = base.resize((new_w, new_h), Image.BICUBIC)
+                new_h = max(1, min(int(round(base_h * scale_factor)), max_multi_dim))
+                new_w = max(1, min(int(round(base_w * scale_factor)), max_multi_dim))
+                if new_h != base_h or new_w != base_w:
+                    scaled = F.interpolate(
+                        base_tensor_device,
+                        size=(new_h, new_w),
+                        mode="bicubic",
+                        align_corners=False,
+                    )
                 logger.debug(
                     "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f resized=%dx%d",
                     tile_idx,
                     scale_factor,
-                    work.width,
-                    work.height,
+                    int(scaled.shape[-1]),
+                    int(scaled.shape[-2]),
                 )
 
             produced = 0
-            if enable_tta:
-                min_dim = min(work.width, work.height)
-                if min_dim >= target_side:
-                    try:
-                        tile_crops = list(transforms.FiveCrop(target_side)(work))
-                        crops.extend(_preprocess(c) for c in tile_crops)
-                        produced = len(tile_crops)
-                    except Exception as exc:  # pragma: no cover
-                        logger.warning(
-                            "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f tta_error=%s",
-                            tile_idx,
-                            scale_factor,
-                            exc,
-                        )
-                else:
-                    logger.debug(
-                        "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f skipped_tta size=%dx%d",
-                        tile_idx,
-                        scale_factor,
-                        work.width,
-                        work.height,
-                    )
+            for crop in _make_crops(scaled, target_side, enable_tta):
+                crop = crop.to(torch.float32)
+                crop = (crop - norm_mean) / norm_std
+                if target_dtype is not torch.float32:
+                    crop = crop.to(dtype=target_dtype)
+                crops.append(crop.squeeze(0).contiguous(memory_format=torch.channels_last))
+                produced += 1
 
-            if produced == 0:
-                crops.append(_preprocess(work))
-                produced = 1
             logger.debug(
                 "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f produced=%d", tile_idx, scale_factor, produced
             )
@@ -355,20 +411,23 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
 
     prep_elapsed = (time.perf_counter() - start) * 1000.0
     batch = torch.stack(crops).contiguous(memory_format=torch.channels_last)
-    transfer_ms = 0.0
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
-        batch = batch.pin_memory()
-        transfer_start = time.perf_counter()
-        transfer_stream = torch.cuda.Stream(device=torch.cuda.current_device())
-        with torch.cuda.stream(transfer_stream):
-            batch = batch.to(VISION_DEVICE, non_blocking=True)
-            if AMP_DTYPE is not None:
-                batch = batch.to(dtype=AMP_DTYPE, non_blocking=True)
-        torch.cuda.current_stream().wait_stream(transfer_stream)
-        transfer_ms = (time.perf_counter() - transfer_start) * 1000.0
+        if batch.device.type != "cuda":
+            batch = batch.pin_memory()
+            transfer_start = time.perf_counter()
+            transfer_stream = torch.cuda.Stream(device=torch.cuda.current_device())
+            with torch.cuda.stream(transfer_stream):
+                batch = batch.to(VISION_DEVICE, non_blocking=True)
+                if AMP_DTYPE is not None:
+                    batch = batch.to(dtype=AMP_DTYPE, non_blocking=True)
+            torch.cuda.current_stream().wait_stream(transfer_stream)
+            transfer_ms = (time.perf_counter() - transfer_start) * 1000.0
+        elif AMP_DTYPE is not None and batch.dtype != AMP_DTYPE:
+            batch = batch.to(dtype=AMP_DTYPE)
     else:
-        batch = batch.to(VISION_DEVICE)
-        if AMP_DTYPE is not None:
+        if batch.device != torch.device(VISION_DEVICE or "cpu"):
+            batch = batch.to(VISION_DEVICE or "cpu")
+        if AMP_DTYPE is not None and batch.dtype != AMP_DTYPE:
             batch = batch.to(dtype=AMP_DTYPE)
 
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
@@ -429,9 +488,9 @@ def embed_text(text: str) -> List[float]:
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
         torch.cuda.synchronize()
     tokenize_start = time.perf_counter()
+    transfer_ms = 0.0
     with torch.no_grad():
         tokens = TEXT_TOKENIZER([text], context_length=ctx_len)  # type: ignore
-        transfer_ms = 0.0
         if hasattr(tokens, "to"):
             if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
                 transfer_start = time.perf_counter()

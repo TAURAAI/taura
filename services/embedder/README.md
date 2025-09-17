@@ -1,6 +1,6 @@
 # Embedder Service (Prototype)
 
-FastAPI-based embedding microservice (production-tuned models).
+FastAPI-based embedding microservice (production-tuned models) with on-device multi-scale preprocessing so GPU pipelines stay saturated while keeping CPU load low.
 
 Default build ships with **SigLIP So400M ViT-L/14 @384** (`hf-hub:timm/ViT-SO400M-14-SigLIP-384`) via OpenCLIP, 384 px resize/crop, multi-scale 5-crop TTA, and cosine-normalised **1152-d** outputs tuned for pgvector.
 
