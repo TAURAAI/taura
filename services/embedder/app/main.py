@@ -19,6 +19,13 @@ class ImageEmbedJSON(BaseModel):
     uri: Optional[str] = None  # future use if remote fetch allowed
     bytes_b64: Optional[str] = None
 
+class ImageBatchRequest(BaseModel):
+    images_b64: List[str]
+
+class ImageBatchResponse(BaseModel):
+    vecs: List[List[float]]
+    errors: List[Optional[str]]
+
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "time": time.time()}
@@ -74,3 +81,23 @@ async def embed_image(request: Request, file: UploadFile | None = File(None)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"vec": vec}
+
+
+@app.post("/embed/image/batch", response_model=ImageBatchResponse)
+async def embed_image_batch(req: ImageBatchRequest):
+    vecs: List[List[float]] = []
+    errors: List[Optional[str]] = []
+    for b64 in req.images_b64:
+        if not b64:
+            vecs.append([])
+            errors.append("empty b64")
+            continue
+        try:
+            data_bytes = base64.b64decode(b64)
+            v = embed_image_bytes(data_bytes)
+            vecs.append(v)
+            errors.append(None)
+        except Exception as e:  # pragma: no cover
+            vecs.append([])
+            errors.append(str(e))
+    return ImageBatchResponse(vecs=vecs, errors=errors)

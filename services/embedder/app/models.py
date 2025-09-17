@@ -22,9 +22,10 @@ except Exception:
     _HAS_SENTENCE_TX = False
 
 _preprocess = transforms.Compose([
-    transforms.Resize(576),
+    transforms.Resize(576, interpolation=transforms.InterpolationMode.BICUBIC),
     transforms.CenterCrop(576),
     transforms.ToTensor(),
+    transforms.Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
 ])
 
 VISION_MODEL: Optional[nn.Module] = None
@@ -44,14 +45,29 @@ def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> 
             model, preprocess = open_clip.create_model_from_pretrained('hf-hub:timm/ViT-SO400M-14-SigLIP-384', device=device)
             tokenizer = open_clip.get_tokenizer('hf-hub:timm/ViT-SO400M-14-SigLIP-384')
             model.eval()
-            
+
             target = int(os.environ.get("VISION_SIZE", "384"))
+            # Extract Normalize (mean/std) from original preprocess if present
+            norm = None
+            if hasattr(preprocess, 'transforms'):
+                for t in preprocess.transforms:  # type: ignore
+                    if isinstance(t, transforms.Normalize):
+                        norm = t
+                        break
+            mean = [0.48145466, 0.4578275, 0.40821073]
+            std = [0.26862954, 0.26130258, 0.27577711]
+            if norm is not None:  # type: ignore
+                mean = list(norm.mean)  # type: ignore
+                std = list(norm.std)    # type: ignore
+
+            # Proper pipeline: Resize -> CenterCrop -> ToTensor -> Normalize
             _preprocess = transforms.Compose([
                 transforms.Resize(target, interpolation=transforms.InterpolationMode.BICUBIC),
                 transforms.CenterCrop(target),
-                preprocess.transforms[-1] if hasattr(preprocess, 'transforms') else transforms.ToTensor(),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=mean, std=std),
             ])
-            
+
             VISION_MODEL = model
             TEXT_MODEL = model
             TEXT_TOKENIZER = tokenizer
@@ -81,15 +97,18 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     else:
         tiles.append(img)
     crops = []
+    target_side = 384
     for base in tiles:
         if enable_tta:
             try:
-                for c in transforms.FiveCrop(384)(base):
+                for c in transforms.FiveCrop(target_side)(base):
                     crops.append(_preprocess(c))
             except Exception:
                 crops.append(_preprocess(base))
         else:
             crops.append(_preprocess(base))
+    if len(crops) == 0:
+        raise ValueError("no crops produced")
     batch = torch.stack(crops).to(VISION_DEVICE)
     with torch.no_grad():
         emb = VISION_MODEL.encode_image(batch)  # type: ignore

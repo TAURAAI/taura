@@ -11,7 +11,6 @@ import (
 	"log"
 	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
-	"encoding/base64"
 	"io/ioutil"
 )
 
@@ -43,6 +42,8 @@ func PostSync(c *fiber.Ctx) error {
 	defer tx.Rollback(ctx)
 
 	upserted := 0
+	type pendingImage struct { mediaID string; uri string; bytes []byte }
+	var pending []pendingImage
 	for idx, item := range req.Items {
 		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
 
@@ -103,34 +104,12 @@ func PostSync(c *fiber.Ctx) error {
 
 		lowerMod := strings.ToLower(item.Modality)
 		if lowerMod == "image" || lowerMod == "pdf_page" {
-			// Perform embedding OUTSIDE the savepoint but do not allow failure to break transaction.
-			// Convert local file path to base64 to comply with embedder (which disallows raw uri fetch unless ALLOW_LOCAL_URI set).
-			isLocal := false
 			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
-				isLocal = true
-			}
-			var vec []float32
-			var embErr error
-			if isLocal {
 				bytes, readErr := ioutil.ReadFile(item.URI)
 				if readErr != nil {
 					log.Printf("read file for embed failed uri=%s err=%v", item.URI, readErr)
 				} else {
-					b64 := base64.StdEncoding.EncodeToString(bytes)
-					vec, embErr = embed.Image(ctx, b64, true)
-				}
-			} else {
-				vec, embErr = embed.Image(ctx, item.URI, false)
-			}
-			if embErr != nil {
-				log.Printf("embed image failed uri=%s err=%v", item.URI, embErr)
-			} else if len(vec) > 0 {
-				parts := make([]string, len(vec))
-				for i, f := range vec { parts[i] = fmt.Sprintf("%.6f", f) }
-				vectorLiteral := "[" + strings.Join(parts, ",") + "]"
-				if _, insErr := tx.Exec(ctx, `INSERT INTO media_vecs (media_id, embedding) VALUES ($1, $2::vector)
-					ON CONFLICT (media_id) DO UPDATE SET embedding=EXCLUDED.embedding`, mediaID, vectorLiteral); insErr != nil {
-					log.Printf("media_vecs upsert error media_id=%s err=%v", mediaID, insErr)
+					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
 				}
 			}
 		}
@@ -140,5 +119,34 @@ func PostSync(c *fiber.Ctx) error {
 	if err := tx.Commit(ctx); err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "tx commit")
 	}
-	return c.JSON(fiber.Map{"upserted": upserted})
+
+	// Batch embed after commit to reduce DB lock time
+	const chunk = 16
+	for i := 0; i < len(pending); i += chunk {
+		end := i + chunk
+		if end > len(pending) { end = len(pending) }
+		batch := pending[i:end]
+		payload := make([][]byte, len(batch))
+		for j, p := range batch { payload[j] = p.bytes }
+		vecs, errs, errBatch := embed.ImageBatch(ctx, payload)
+		if errBatch != nil {
+			log.Printf("image batch embed error start=%d err=%v", i, errBatch)
+			continue
+		}
+		for j, vec := range vecs {
+			if len(vec) == 0 {
+				if errs != nil && errs[j] != "" { log.Printf("embed image failed uri=%s err=%s", batch[j].uri, errs[j]) }
+				continue
+			}
+			parts := make([]string, len(vec))
+			for k, f := range vec { parts[k] = fmt.Sprintf("%.6f", f) }
+			vectorLiteral := "[" + strings.Join(parts, ",") + "]"
+			if _, insErr := database.Pool.Exec(ctx, `INSERT INTO media_vecs (media_id, embedding) VALUES ($1, $2::vector)
+				ON CONFLICT (media_id) DO UPDATE SET embedding=EXCLUDED.embedding`, batch[j].mediaID, vectorLiteral); insErr != nil {
+				log.Printf("media_vecs upsert error media_id=%s err=%v", batch[j].mediaID, insErr)
+			}
+		}
+	}
+
+	return c.JSON(fiber.Map{"upserted": upserted, "embedded_images": len(pending)})
 }
