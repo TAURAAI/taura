@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torchvision import transforms
 from PIL import Image
-from typing import List, Optional, Tuple
+from typing import List, Optional
 import io
 import os
 
@@ -32,21 +33,26 @@ VISION_MODEL: Optional[nn.Module] = None
 VISION_DEVICE: Optional[str] = None
 TEXT_MODEL: Optional[nn.Module] = None
 TEXT_TOKENIZER: Optional[callable] = None
+TARGET_DIM: Optional[int] = None
+MODEL_ID: str = os.environ.get("VISION_MODEL_ID", "hf-hub:timm/ViT-L-14-SigLIP-384")
+TARGET_IMAGE_SIZE: int = int(os.environ.get("VISION_SIZE", "576"))
+CROP_SIZE: int = int(os.environ.get("TTA_CROP_SIZE", os.environ.get("VISION_SIZE", "576")))
 
 
 def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> None:
-    global VISION_MODEL, VISION_DEVICE, TEXT_MODEL, TEXT_TOKENIZER, _preprocess
+    global VISION_MODEL, VISION_DEVICE, TEXT_MODEL, TEXT_TOKENIZER, _preprocess, TARGET_DIM, TARGET_IMAGE_SIZE, CROP_SIZE
     if VISION_MODEL is not None:
         return
 
     VISION_DEVICE = device
     if _HAS_OPEN_CLIP:
         try:
-            model, preprocess = open_clip.create_model_from_pretrained('hf-hub:timm/ViT-SO400M-14-SigLIP-384', device=device)
-            tokenizer = open_clip.get_tokenizer('hf-hub:timm/ViT-SO400M-14-SigLIP-384')
+            model, preprocess = open_clip.create_model_from_pretrained(MODEL_ID, device=device)
+            tokenizer = open_clip.get_tokenizer(MODEL_ID)
             model.eval()
 
-            target = int(os.environ.get("VISION_SIZE", "384"))
+            TARGET_IMAGE_SIZE = int(os.environ.get("VISION_SIZE", "576"))
+            CROP_SIZE = int(os.environ.get("TTA_CROP_SIZE", str(TARGET_IMAGE_SIZE)))
             # Extract Normalize (mean/std) from original preprocess if present
             norm = None
             if hasattr(preprocess, 'transforms'):
@@ -62,8 +68,8 @@ def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> 
 
             # Proper pipeline: Resize -> CenterCrop -> ToTensor -> Normalize
             _preprocess = transforms.Compose([
-                transforms.Resize(target, interpolation=transforms.InterpolationMode.BICUBIC),
-                transforms.CenterCrop(target),
+                transforms.Resize(TARGET_IMAGE_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
+                transforms.CenterCrop(TARGET_IMAGE_SIZE),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=mean, std=std),
             ])
@@ -71,6 +77,16 @@ def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> 
             VISION_MODEL = model
             TEXT_MODEL = model
             TEXT_TOKENIZER = tokenizer
+            dim = getattr(model, "embed_dim", None)
+            if dim is None and hasattr(model, "text") and hasattr(model.text, "output_dim"):
+                dim = getattr(model.text, "output_dim")
+            if dim is None and hasattr(model, "text") and hasattr(model.text, "proj"):
+                proj = getattr(model.text, "proj")
+                if hasattr(proj, "out_features"):
+                    dim = proj.out_features
+            if dim is None:
+                dim = int(os.environ.get("EMBED_DIM", "768"))
+            TARGET_DIM = int(dim)
         except Exception as e:  # pragma: no cover
             print(f"[embedder] open-clip vision load failed: {e}")
             raise e
@@ -78,6 +94,18 @@ def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> 
 
 def load_and_preprocess(image_bytes: bytes) -> Image.Image:
     return Image.open(io.BytesIO(image_bytes)).convert("RGB")
+
+
+def _project_embedding(vec: torch.Tensor) -> torch.Tensor:
+    """Ensure embeddings match TARGET_DIM and are L2 normalised."""
+    if TARGET_DIM is None:
+        raise RuntimeError("model not initialised; call load_model() first")
+    if vec.ndim != 1:
+        raise ValueError(f"expected 1D embedding tensor, got shape {tuple(vec.shape)}")
+    current = vec.shape[0]
+    if current != TARGET_DIM:
+        raise ValueError(f"embedding dim {current} != target {TARGET_DIM}")
+    return F.normalize(vec, dim=-1)
 
 
 def embed_image_bytes(image_bytes: bytes) -> List[float]:
@@ -97,7 +125,7 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     else:
         tiles.append(img)
     crops = []
-    target_side = 384
+    target_side = CROP_SIZE
     for base in tiles:
         if enable_tta:
             try:
@@ -113,7 +141,7 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     with torch.no_grad():
         emb = VISION_MODEL.encode_image(batch)  # type: ignore
         emb = emb.mean(0)
-        emb = nn.functional.normalize(emb, dim=-1)
+        emb = _project_embedding(emb)
     return emb.cpu().tolist()
 
 
@@ -121,10 +149,12 @@ def embed_text(text: str) -> List[float]:
     load_model()
     text = (text or "").strip()
     if not text:
-        return [0.0]*768
+        if TARGET_DIM is None:
+            raise RuntimeError("model not initialised")
+        return [0.0] * TARGET_DIM
     with torch.no_grad():
         tokens = TEXT_TOKENIZER([text]).to(VISION_DEVICE)  # type: ignore
         emb = TEXT_MODEL.encode_text(tokens)  # type: ignore (B, D)
-        emb = nn.functional.normalize(emb, dim=-1)
         v = emb[0]
+        v = _project_embedding(v)
     return v.cpu().tolist()

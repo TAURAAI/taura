@@ -2,7 +2,7 @@
 
 FastAPI-based embedding microservice (placeholder models).
 
-TODO: Replace dummy encoders with SigLIP-2 ViT-L/14 + proper text tower.
+Default build loads the SigLIP ViT-L/14 checkpoint (HF `hf-hub:timm/ViT-L-14-SigLIP-384`) via OpenCLIP with 576px preprocessing.
 
 ## Endpoints
 - GET `/healthz` -> health status
@@ -29,8 +29,13 @@ docker build -t embedder:dev services/embedder
 docker run --gpus all -p 9000:9000 embedder:dev
 ```
 
+## Environment
+
+- `VISION_MODEL_ID` (default `hf-hub:timm/ViT-L-14-SigLIP-384`)
+- `VISION_SIZE` (default `576`)
+- `TTA_CROP_SIZE` (defaults to `VISION_SIZE`)
+
 ## TODO (Upgrade to Production)
-- Replace Dummy encoders with real SigLIP-2 (vision + text) weights
 - Add batching scheduler combining incoming requests within 10-20ms window
 - Add ONNX / TensorRT export path for lower latency
 - Add tracing + Prometheus metrics
