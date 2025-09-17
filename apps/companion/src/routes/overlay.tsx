@@ -76,7 +76,7 @@ function Overlay() {
       }
       if (e.key === 'Enter' && results[activeIdx]) {
         invoke('open_file', { path: results[activeIdx].uri })
-          .then(() => invoke('toggle_overlay'))
+          .then(() => { inputRef.current?.focus() })
           .catch(() => {})
       }
     }
@@ -145,8 +145,13 @@ function Overlay() {
                   onMouseDown={(e) => e.preventDefault()}
                   onMouseEnter={() => setActiveIdx(i)}
                   onClick={async () => {
-                    await invoke('open_file', { path: r.uri })
-                    await invoke('toggle_overlay')
+                    try {
+                      await invoke('open_file', { path: r.uri })
+                      // keep overlay open; refocus search box
+                      inputRef.current?.focus()
+                    } catch (_) {
+                      /* swallow */
+                    }
                   }}
                 >
                   <div className="palette-row-icon">
