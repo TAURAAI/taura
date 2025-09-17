@@ -5,7 +5,7 @@ import time
 import base64
 import os
 
-from .models import embed_image_bytes, embed_text
+from .models import embed_image_bytes, embed_text, load_model
 
 app = FastAPI(title="Embedder Service", version="0.1.0")
 
@@ -29,6 +29,27 @@ class ImageBatchResponse(BaseModel):
 @app.get("/healthz")
 def healthz():
     return {"status": "ok", "time": time.time()}
+
+@app.post("/warmup")
+def warmup():
+    """Load model & run a tiny forward pass to reduce first-request latency."""
+    import logging
+    import random
+    from PIL import Image
+    import io as _io
+    logger = logging.getLogger(__name__)
+    start = time.time()
+    load_model()
+    # run text warmup
+    _ = embed_text("warmup")
+    # create small random RGB image (32x32) and embed
+    img = Image.new("RGB", (32, 32), (random.randint(0,255), random.randint(0,255), random.randint(0,255)))
+    buf = _io.BytesIO()
+    img.save(buf, format="PNG")
+    _ = embed_image_bytes(buf.getvalue())
+    elapsed = time.time() - start
+    logger.info(f"[WARMUP] completed in {elapsed:.3f}s")
+    return {"status": "ok", "elapsed": elapsed}
 
 @app.post("/embed/text")
 def embed_text_endpoint(req: TextRequest):

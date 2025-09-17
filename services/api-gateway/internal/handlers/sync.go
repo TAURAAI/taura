@@ -142,15 +142,20 @@ func PostSync(c *fiber.Ctx) error {
 			end = len(pending)
 		}
 		batch := pending[i:end]
+		batchBytes := 0
+		for _, p := range batch { batchBytes += len(p.bytes) }
+		startBatch := time.Now()
 		payload := make([][]byte, len(batch))
 		for j, p := range batch {
 			payload[j] = p.bytes
 		}
 		vecs, errs, errBatch := embed.ImageBatch(ctx, payload)
+		elapsed := time.Since(startBatch)
 		if errBatch != nil {
-			log.Printf("image batch embed error start=%d err=%v", i, errBatch)
+			log.Printf("image batch embed error start=%d count=%d bytes=%d elapsed=%dms err=%v", i, len(batch), batchBytes, elapsed.Milliseconds(), errBatch)
 			continue
 		}
+		log.Printf("image batch embed ok start=%d count=%d bytes=%d elapsed=%dms", i, len(batch), batchBytes, elapsed.Milliseconds())
 		for j, vec := range vecs {
 			if len(vec) == 0 {
 				if errs != nil && errs[j] != "" {
