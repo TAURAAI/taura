@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -45,11 +46,11 @@ func PostSearch(c *fiber.Ctx) error {
 		log.Printf("[SEARCH] Failed to parse request body: %v", err)
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	
+
 	// Log the incoming search request
-	log.Printf("[SEARCH] Incoming request - user_id=%s, text='%s', top_k=%d, filters=%v", 
+	log.Printf("[SEARCH] Incoming request - user_id=%s, text='%s', top_k=%d, filters=%v",
 		req.UserID, truncate(req.Text, 80), req.TopK, req.Filters)
-	
+
 	if req.TopK <= 0 {
 		req.TopK = 10
 	}
@@ -69,14 +70,14 @@ func PostSearch(c *fiber.Ctx) error {
 	start := time.Now()
 	vec, err := embed.Text(ctx, req.Text)
 	if err != nil {
-		log.Printf("[SEARCH] Embedder text error - text='%s', error=%v, elapsed=%dms", 
+		log.Printf("[SEARCH] Embedder text error - text='%s', error=%v, elapsed=%dms",
 			truncate(req.Text, 80), err, time.Since(start).Milliseconds())
 		return fiber.NewError(fiber.StatusBadGateway, "embedder error")
 	}
 	embedDur := time.Since(start)
-	log.Printf("[SEARCH] Text embedding completed - dim=%d, elapsed=%dms, norm=%.6f", 
+	log.Printf("[SEARCH] Text embedding completed - dim=%d, elapsed=%dms, norm=%.6f",
 		len(vec), embedDur.Milliseconds(), vectorNorm(vec))
-	
+
 	if embedDur > 150*time.Millisecond {
 		log.Printf("[SEARCH] Embedder latency warning - elapsed=%dms (>150ms)", embedDur.Milliseconds())
 	}
@@ -237,19 +238,19 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 
 	// Vector search execution
-	annLimit := req.TopK * 4
-	if annLimit < 40 {
-		annLimit = 40
+	annLimit := req.TopK * 6
+	if annLimit < 80 {
+		annLimit = 80
 	}
-	if annLimit > 200 {
-		annLimit = 200
+	if annLimit > 400 {
+		annLimit = 400
 	}
 	if annLimit < req.TopK {
 		annLimit = req.TopK
 	}
 	params = append(params, annLimit)
 	limitIdx := len(params)
-	
+
 	sql := fmt.Sprintf(`SELECT m.id, 1 - (v.embedding <=> $1::vector) AS score, COALESCE(m.thumb_url,''), m.uri, COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality, m.album, m.source
 		FROM media_vecs v
 		JOIN media m ON m.id = v.media_id
@@ -265,7 +266,7 @@ func PostSearch(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
 	}
 	defer rows.Close()
-	
+
 	results := make([]SearchResult, 0, annLimit)
 	var bestScore float32
 	resultCount := 0
@@ -283,7 +284,7 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	queryDur := time.Since(queryStart)
 	log.Printf("[SEARCH] Vector search completed - results=%d, best_score=%.4f, elapsed=%dms", resultCount, bestScore, queryDur.Milliseconds())
-	
+
 	// Reranking with logging
 	keywords := tokenizeQuery(req.Text)
 	log.Printf("[SEARCH] Starting rerank - keywords=%v, initial_results=%d", keywords, len(results))
@@ -291,7 +292,7 @@ func PostSearch(c *fiber.Ctx) error {
 	results = rerankResults(results, keywords, req.TopK)
 	rerankDur := time.Since(rerankStart)
 	log.Printf("[SEARCH] Rerank completed - final_results=%d, elapsed=%dms", len(results), rerankDur.Milliseconds())
-	
+
 	// Keyword fallback logic
 	if len(results) == 0 || bestScore < 0.2 {
 		log.Printf("[SEARCH] Triggering keyword fallback - results=%d, best_score=%.4f", len(results), bestScore)
@@ -306,11 +307,11 @@ func PostSearch(c *fiber.Ctx) error {
 			log.Printf("[SEARCH] Keyword fallback returned no results - elapsed=%dms", time.Since(fallbackStart).Milliseconds())
 		}
 	}
-	
+
 	totalDur := time.Since(searchStart)
-	log.Printf("[SEARCH] Search completed - user=%s, text='%s', final_results=%d, total_elapsed=%dms", 
+	log.Printf("[SEARCH] Search completed - user=%s, text='%s', final_results=%d, total_elapsed=%dms",
 		originalUserID, truncate(req.Text, 80), len(results), totalDur.Milliseconds())
-	
+
 	return c.JSON(SearchResponse{Results: results})
 }
 
@@ -320,12 +321,16 @@ func rerankResults(base []SearchResult, keywords []string, topK int) []SearchRes
 	}
 	kwCount := len(keywords)
 	log.Printf("[RERANK] Starting rerank - input_count=%d, keywords=%d, topK=%d", len(base), kwCount, topK)
-	
+	years, months := parseTemporalHints(keywords)
+	if len(years) > 0 || len(months) > 0 {
+		log.Printf("[RERANK] Temporal hints detected - years=%v, months=%v", years, months)
+	}
+
 	if kwCount == 0 && len(base) <= topK {
 		log.Printf("[RERANK] No keywords and results fit limit, returning as-is")
 		return base
 	}
-	
+
 	bonusCount := 0
 	for i := range base {
 		originalScore := base[i].Score
@@ -355,11 +360,47 @@ func rerankResults(base []SearchResult, keywords []string, topK int) []SearchRes
 				}
 			}
 			if matches > 0 {
-				bonus = float32(matches) * 0.03
+				bonus += float32(matches) * 0.03
 				if bonus > 0.15 {
 					bonus = 0.15
 				}
 				bonusCount++
+			}
+		}
+		if len(years) > 0 || len(months) > 0 {
+			tScore := float32(0)
+			if base[i].TS != "" {
+				if parsed, err := time.Parse(time.RFC3339, base[i].TS); err == nil {
+					if len(years) > 0 {
+						for _, y := range years {
+							if parsed.Year() == y {
+								tScore += 0.06
+								break
+							}
+						}
+					}
+					if len(months) > 0 {
+						for _, m := range months {
+							if parsed.Month() == m {
+								tScore += 0.04
+								break
+							}
+						}
+					}
+				}
+			}
+			if base[i].Album != nil && len(years) > 0 {
+				lowerAlbum := strings.ToLower(*base[i].Album)
+				for _, y := range years {
+					if strings.Contains(lowerAlbum, fmt.Sprintf("%d", y)) {
+						tScore += 0.02
+						break
+					}
+				}
+			}
+			if tScore > 0 {
+				bonus += tScore
+				log.Printf("[RERANK] Item %d temporal boost - uri='%s', boost=%.4f", i, truncate(base[i].URI, 50), tScore)
 			}
 		}
 		scored := base[i].Score + bonus
@@ -367,25 +408,25 @@ func rerankResults(base []SearchResult, keywords []string, topK int) []SearchRes
 			scored = 1.0
 		}
 		base[i].Score = scored
-		
+
 		if bonus > 0 {
-			log.Printf("[RERANK] Item %d keyword bonus - uri='%s', original_score=%.4f, bonus=%.4f, final_score=%.4f", 
+			log.Printf("[RERANK] Item %d keyword bonus - uri='%s', original_score=%.4f, bonus=%.4f, final_score=%.4f",
 				i, truncate(base[i].URI, 50), originalScore, bonus, scored)
 		}
 	}
-	
+
 	log.Printf("[RERANK] Applied keyword bonuses to %d/%d items", bonusCount, len(base))
-	
+
 	sort.Slice(base, func(i, j int) bool {
 		if base[i].Score == base[j].Score {
 			return base[i].TS > base[j].TS
 		}
 		return base[i].Score > base[j].Score
 	})
-	
-	log.Printf("[RERANK] Sorted results - best_score=%.4f, worst_score=%.4f", 
+
+	log.Printf("[RERANK] Sorted results - best_score=%.4f, worst_score=%.4f",
 		base[0].Score, base[len(base)-1].Score)
-	
+
 	if topK < len(base) {
 		trim := make([]SearchResult, topK)
 		copy(trim, base[:topK])
@@ -423,9 +464,61 @@ func tokenizeQuery(q string) []string {
 	return out
 }
 
+var monthLookup = map[string]time.Month{
+	"jan":       time.January,
+	"january":   time.January,
+	"feb":       time.February,
+	"february":  time.February,
+	"mar":       time.March,
+	"march":     time.March,
+	"apr":       time.April,
+	"april":     time.April,
+	"may":       time.May,
+	"jun":       time.June,
+	"june":      time.June,
+	"jul":       time.July,
+	"july":      time.July,
+	"aug":       time.August,
+	"august":    time.August,
+	"sep":       time.September,
+	"sept":      time.September,
+	"september": time.September,
+	"oct":       time.October,
+	"october":   time.October,
+	"nov":       time.November,
+	"november":  time.November,
+	"dec":       time.December,
+	"december":  time.December,
+}
+
+func parseTemporalHints(tokens []string) ([]int, []time.Month) {
+	years := make([]int, 0, 2)
+	months := make([]time.Month, 0, 2)
+	yearSeen := map[int]struct{}{}
+	monthSeen := map[time.Month]struct{}{}
+	for _, tok := range tokens {
+		if len(tok) == 4 {
+			if y, err := strconv.Atoi(tok); err == nil && y >= 1900 && y <= 2100 {
+				if _, ok := yearSeen[y]; !ok {
+					yearSeen[y] = struct{}{}
+					years = append(years, y)
+				}
+				continue
+			}
+		}
+		if m, ok := monthLookup[tok]; ok {
+			if _, seen := monthSeen[m]; !seen {
+				monthSeen[m] = struct{}{}
+				months = append(months, m)
+			}
+		}
+	}
+	return years, months
+}
+
 func keywordFallback(ctx context.Context, database *db.Database, userID string, tokens []string, limit int) ([]SearchResult, error) {
 	log.Printf("[FALLBACK] Starting keyword fallback - user=%s, tokens=%v, limit=%d", userID, tokens, limit)
-	
+
 	params := []interface{}{userID}
 	where := strings.Builder{}
 	if len(tokens) > 0 {
@@ -457,7 +550,7 @@ func keywordFallback(ctx context.Context, database *db.Database, userID string, 
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	results := make([]SearchResult, 0, limit)
 	for rows.Next() {
 		var r SearchResult
@@ -467,7 +560,7 @@ func keywordFallback(ctx context.Context, database *db.Database, userID string, 
 		}
 		results = append(results, r)
 	}
-	
+
 	queryDur := time.Since(queryStart)
 	log.Printf("[FALLBACK] Fallback completed - results=%d, elapsed=%dms", len(results), queryDur.Milliseconds())
 	return results, nil

@@ -8,9 +8,12 @@ RUN pip3 install --no-cache-dir -r requirements.txt
 COPY app ./app
 
 # Set environment variables (before warm-up to ensure correct checkpoint is fetched)
-ENV VISION_MODEL_ID="hf-hub:google/siglip-so400m-patch14-384"
+ENV VISION_MODEL_ID="hf-hub:timm/ViT-SO400M-14-SigLIP-384"
 ENV VISION_SIZE="384"
 ENV ENABLE_TTA="1"
+ENV ENABLE_MULTI_SCALE="1"
+ENV MULTI_SCALE_FACTORS="1.0,1.35"
+ENV MULTI_SCALE_MAX_DIM="1536"
 ENV PANORAMA_MAX_RATIO="2.6"
 ENV MODEL_PRECISION="bf16"
 

@@ -1,4 +1,11 @@
 use tauri::{Manager, Emitter};
+use tokio::time::sleep; // for throttled scan yielding
+use std::sync::atomic::{AtomicBool, Ordering};
+use once_cell::sync::Lazy;
+
+// Cancellation + config state
+static CANCEL_SCAN: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+static DEFAULT_THROTTLE_VALUE: Lazy<std::sync::Mutex<u64>> = Lazy::new(|| std::sync::Mutex::new(40)); // 40ms gentle by default
 use std::process::Command;
 use walkdir::WalkDir;
 
@@ -56,59 +63,102 @@ async fn pick_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-async fn scan_folder(path: String, max_samples: Option<usize>) -> Result<ScanResult, String> {
+async fn scan_folder(path: String, max_samples: Option<usize>, throttle_ms: Option<u64>, app: tauri::AppHandle) -> Result<ScanResult, String> {
   if path.is_empty() { return Err("path empty".into()); }
+  // Reset cancellation flag at start
+  CANCEL_SCAN.store(false, Ordering::SeqCst);
   let limit = max_samples.unwrap_or(10);
   let mut samples = Vec::new();
   let mut count: usize = 0;
   let mut items: Vec<MediaMeta> = Vec::new();
+
   let walker = WalkDir::new(&path).follow_links(false).max_depth(8);
-  
+  let mut processed: usize = 0;
+  let mut last_emit = std::time::Instant::now();
+
+  // initial event (indeterminate total)
+  let _ = app.emit("scan_progress", serde_json::json!({
+    "path": path,
+    "processed": 0,
+    "total": 0,
+    "matched": 0
+  }));
+
+  let sleep_every = 32usize; // after how many files to apply sleep
+  let throttle = throttle_ms.or_else(|| {
+    // use stored default throttle if user didn't explicitly pass one
+    Some(*DEFAULT_THROTTLE_VALUE.lock().unwrap())
+  }).unwrap_or(0);
   for entry in walker {
+    if CANCEL_SCAN.load(Ordering::SeqCst) {
+      let _ = app.emit("scan_progress", serde_json::json!({
+        "path": path,
+        "processed": processed,
+        "total": processed,
+        "matched": count,
+        "cancelled": true,
+        "done": true
+      }));
+      return Ok(ScanResult { count, samples, items });
+    }
     let entry = match entry { Ok(e) => e, Err(_) => continue };
     if entry.file_type().is_file() {
+      processed += 1;
       let p = entry.path();
       if is_media_file(p) {
         count += 1;
-        if samples.len() < limit {
-          if let Some(s) = p.to_str() { samples.push(s.to_string()); }
-        }
-        
+        if samples.len() < limit { if let Some(s) = p.to_str() { samples.push(s.to_string()); } }
         let mut size: u64 = 0; 
         let mut modified: Option<String> = None;
         if let Ok(md) = entry.metadata() {
           size = md.len();
-          if let Ok(mt) = md.modified() {
-            let dt: chrono::DateTime<chrono::Utc> = mt.into();
-            modified = Some(dt.to_rfc3339());
-          }
+          if let Ok(mt) = md.modified() { let dt: chrono::DateTime<chrono::Utc> = mt.into(); modified = Some(dt.to_rfc3339()); }
         }
-        
         let (lat, lon, exif_timestamp) = (None, None, None);
-        
         let modality = match p.extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()) {
           Some(ext) if ext == "pdf" => "pdf_page".to_string(),
           Some(ext) if matches!(ext.as_str(), "mp4"|"mov"|"avi"|"mkv") => "video".to_string(),
           _ => "image".to_string(),
         };
-        
-        if let Some(s) = p.to_str() { 
-          items.push(MediaMeta { 
-            path: s.to_string(), 
-            size, 
-            modified, 
-            modality,
-            lat,
-            lon,
-            timestamp: exif_timestamp,
-          }); 
-        }
+        if let Some(s) = p.to_str() { items.push(MediaMeta { path: s.to_string(), size, modified, modality, lat, lon, timestamp: exif_timestamp }); }
+      }
+      if last_emit.elapsed().as_millis() > 120 {
+        let _ = app.emit("scan_progress", serde_json::json!({
+          "path": path,
+          "processed": processed,
+          "total": 0, // unknown until end
+          "matched": count
+        }));
+        last_emit = std::time::Instant::now();
+      }
+      if throttle > 0 && (processed % sleep_every == 0) {
+        // cooperative yield to keep disk + UI responsive
+        sleep(std::time::Duration::from_millis(throttle)).await;
       }
     }
   }
+  let _ = app.emit("scan_progress", serde_json::json!({
+    "path": path,
+    "processed": processed,
+    "total": processed, // final total
+    "matched": count,
+    "done": true
+  }));
   Ok(ScanResult { count, samples, items })
 }
 
+#[tauri::command]
+async fn stop_scan() -> Result<(), String> {
+  CANCEL_SCAN.store(true, Ordering::SeqCst);
+  Ok(())
+}
+
+#[tauri::command]
+async fn set_default_throttle(ms: u64) -> Result<(), String> {
+  let mut guard = DEFAULT_THROTTLE_VALUE.lock().map_err(|_| "lock poisoned")?;
+  *guard = ms;
+  Ok(())
+}
 #[derive(serde::Deserialize, serde::Serialize)]
 struct SyncPayloadItem {
   user_id: String,
@@ -203,7 +253,18 @@ pub fn run() {
 
   tauri::Builder::default()
     .plugin(shortcut_builder)
-    .invoke_handler(tauri::generate_handler![get_default_folder, pick_folder, scan_folder, sync_index, show_overlay, toggle_overlay, show_main_window, open_file])
+    .invoke_handler(tauri::generate_handler![
+      get_default_folder,
+      pick_folder,
+      scan_folder,
+      stop_scan,
+      set_default_throttle,
+      sync_index,
+      show_overlay,
+      toggle_overlay,
+      show_main_window,
+      open_file
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
