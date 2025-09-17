@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type SearchRequest struct {
@@ -29,6 +31,8 @@ type SearchResult struct {
 	Lat      *float64 `json:"lat"`
 	Lon      *float64 `json:"lon"`
 	Modality string   `json:"modality"`
+	Album    *string  `json:"album,omitempty"`
+	Source   *string  `json:"source,omitempty"`
 }
 
 type SearchResponse struct {
@@ -92,7 +96,7 @@ func PostSearch(c *fiber.Ctx) error {
 
 	parts := make([]string, len(vec))
 	for i, f := range vec {
-		parts[i] = fmt.Sprintf("%.6f", f)
+		parts[i] = fmt.Sprintf("%.9f", f)
 	}
 	vectorLiteral := "[" + strings.Join(parts, ",") + "]"
 
@@ -193,9 +197,19 @@ func PostSearch(c *fiber.Ctx) error {
 		}
 	}
 
-	params = append(params, req.TopK)
+	annLimit := req.TopK * 4
+	if annLimit < 40 {
+		annLimit = 40
+	}
+	if annLimit > 200 {
+		annLimit = 200
+	}
+	if annLimit < req.TopK {
+		annLimit = req.TopK
+	}
+	params = append(params, annLimit)
 	limitIdx := len(params)
-	sql := fmt.Sprintf(`SELECT m.id, 1 - (v.embedding <=> $1::vector) AS score, COALESCE(m.thumb_url,''), m.uri, COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality
+	sql := fmt.Sprintf(`SELECT m.id, 1 - (v.embedding <=> $1::vector) AS score, COALESCE(m.thumb_url,''), m.uri, COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality, m.album, m.source
 		FROM media_vecs v
 		JOIN media m ON m.id = v.media_id
 		WHERE m.user_id = $2 AND m.deleted = false%s
@@ -208,16 +222,90 @@ func PostSearch(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
 	}
 	defer rows.Close()
-	results := make([]SearchResult, 0, req.TopK)
+	results := make([]SearchResult, 0, annLimit)
+	var bestScore float32
 	for rows.Next() {
 		var r SearchResult
-		if err := rows.Scan(&r.MediaID, &r.Score, &r.ThumbURL, &r.URI, &r.TS, &r.Lat, &r.Lon, &r.Modality); err != nil {
+		if err := rows.Scan(&r.MediaID, &r.Score, &r.ThumbURL, &r.URI, &r.TS, &r.Lat, &r.Lon, &r.Modality, &r.Album, &r.Source); err != nil {
 			log.Printf("scan error: %v", err)
 			continue
 		}
+		if len(results) == 0 || r.Score > bestScore {
+			bestScore = r.Score
+		}
 		results = append(results, r)
 	}
+	keywords := tokenizeQuery(req.Text)
+	results = rerankResults(results, keywords, req.TopK)
+	if len(results) == 0 || bestScore < 0.2 {
+		if fb, err := keywordFallback(ctx, database, userID, keywords, req.TopK); err != nil {
+			log.Printf("keyword fallback error: %v", err)
+		} else if len(fb) > 0 {
+			results = rerankResults(fb, keywords, req.TopK)
+		}
+	}
 	return c.JSON(SearchResponse{Results: results})
+}
+
+func rerankResults(base []SearchResult, keywords []string, topK int) []SearchResult {
+	if len(base) == 0 {
+		return base
+	}
+	kwCount := len(keywords)
+	if kwCount == 0 && len(base) <= topK {
+		return base
+	}
+	for i := range base {
+		bonus := float32(0)
+		if kwCount > 0 {
+			metaBuilder := strings.Builder{}
+			metaBuilder.Grow(len(base[i].URI) + 64)
+			metaBuilder.WriteString(strings.ToLower(base[i].URI))
+			metaBuilder.WriteByte(' ')
+			metaBuilder.WriteString(strings.ToLower(base[i].Modality))
+			if base[i].Album != nil {
+				metaBuilder.WriteByte(' ')
+				metaBuilder.WriteString(strings.ToLower(*base[i].Album))
+			}
+			if base[i].Source != nil {
+				metaBuilder.WriteByte(' ')
+				metaBuilder.WriteString(strings.ToLower(*base[i].Source))
+			}
+			meta := metaBuilder.String()
+			matches := 0
+			for _, kw := range keywords {
+				if kw == "" {
+					continue
+				}
+				if strings.Contains(meta, kw) {
+					matches++
+				}
+			}
+			if matches > 0 {
+				bonus = float32(matches) * 0.03
+				if bonus > 0.15 {
+					bonus = 0.15
+				}
+			}
+		}
+		scored := base[i].Score + bonus
+		if scored > 1.0 {
+			scored = 1.0
+		}
+		base[i].Score = scored
+	}
+	sort.Slice(base, func(i, j int) bool {
+		if base[i].Score == base[j].Score {
+			return base[i].TS > base[j].TS
+		}
+		return base[i].Score > base[j].Score
+	})
+	if topK < len(base) {
+		trim := make([]SearchResult, topK)
+		copy(trim, base[:topK])
+		return trim
+	}
+	return base
 }
 
 func truncate(s string, n int) string {
@@ -225,4 +313,55 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func tokenizeQuery(q string) []string {
+	q = strings.ToLower(q)
+	parts := strings.FieldsFunc(q, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if len(p) >= 2 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func keywordFallback(ctx context.Context, database *db.Database, userID string, tokens []string, limit int) ([]SearchResult, error) {
+	params := []interface{}{userID}
+	where := strings.Builder{}
+	if len(tokens) > 0 {
+		clauses := make([]string, 0, len(tokens))
+		for _, tok := range tokens {
+			params = append(params, "%"+tok+"%")
+			idx := len(params)
+			clauses = append(clauses, fmt.Sprintf("(m.uri ILIKE $%d OR COALESCE(m.album,'') ILIKE $%d OR COALESCE(m.source,'') ILIKE $%d)", idx, idx, idx))
+		}
+		where.WriteString(" AND (")
+		where.WriteString(strings.Join(clauses, " OR "))
+		where.WriteString(")")
+	}
+
+	params = append(params, limit)
+	sql := fmt.Sprintf(`SELECT m.id, 0.0 AS score, COALESCE(m.thumb_url,''), m.uri,
+		COALESCE(to_char(m.ts,'YYYY-MM-DD"T"HH24:MI:SSZ'),''), m.lat, m.lon, m.modality, m.album, m.source
+		FROM media m
+		WHERE m.user_id=$1 AND m.deleted=false%s
+		ORDER BY m.ts DESC NULLS LAST, m.uri ASC
+		LIMIT $%d`, where.String(), len(params))
+
+	rows, err := database.Pool.Query(ctx, sql, params...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	results := make([]SearchResult, 0, limit)
+	for rows.Next() {
+		var r SearchResult
+		if err := rows.Scan(&r.MediaID, &r.Score, &r.ThumbURL, &r.URI, &r.TS, &r.Lat, &r.Lon, &r.Modality, &r.Album, &r.Source); err != nil {
+			return nil, err
+		}
+		results = append(results, r)
+	}
+	return results, nil
 }

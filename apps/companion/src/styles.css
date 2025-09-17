@@ -71,4 +71,212 @@ code {
 .metric-chip { @apply inline-flex items-center gap-1 rounded-md bg-white/5 border border-white/10 px-2 py-1 text-[11px] font-medium text-white/70; }
 
 @keyframes overlay-fade-in { from { opacity:0; transform:translateY(6px) scale(.985);} to { opacity:1; transform:translateY(0) scale(1);} }
-.animate-overlay-fade { animation: overlay-fade-in 120ms cubic-bezier(.4,.16,.2,1); }
+.animate-overlay-fade { animation: overlay-fade-in 150ms cubic-bezier(.33,.16,.2,1); }
+
+.palette-root {
+  position: relative;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5vh 0;
+  background: radial-gradient(circle ellipse at top, rgba(118,90,255,0.18), transparent 55%);
+  backdrop-filter: blur(16px) saturate(118%);
+}
+
+.palette-card {
+  position: relative;
+  width: min(520px, calc(100vw - 48px));
+  background: rgba(18,18,24,0.92);
+  border-radius: 32px;
+  box-shadow: 0 24px 80px -28px rgba(0,0,0,0.65), 0 10px 32px -18px rgba(0,0,0,0.5);
+  overflow: hidden;
+  transition: width 220ms ease, max-height 200ms ease;
+}
+
+.palette-card--expanded {
+  width: min(760px, calc(100vw - 48px));
+}
+
+.palette-input {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 18px 24px;
+}
+
+.palette-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.65), rgba(168,85,247,0.65));
+  color: white;
+}
+
+.palette-input-field {
+  flex: 1;
+  background: transparent !important;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  color: rgba(255,255,255,0.96);
+  box-shadow: none;
+}
+.palette-input-field:focus {
+  background: transparent !important;
+  outline: none;
+  box-shadow: none;
+}
+.palette-input-field::placeholder {
+  color: rgba(255,255,255,0.45);
+}
+
+.palette-keycaps {
+  display: flex;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: rgba(255,255,255,0.4);
+}
+.palette-keycaps span {
+  display: inline-flex;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+
+.palette-results {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 200ms ease;
+}
+.palette-results--open {
+  max-height: 360px;
+}
+
+.palette-placeholder {
+  padding: 56px 24px;
+  text-align: center;
+  font-size: 14px;
+  color: rgba(255,255,255,0.52);
+}
+
+.palette-spinner {
+  width: 28px;
+  height: 28px;
+  margin: 0 auto 18px;
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,0.18);
+  border-top-color: rgba(255,255,255,0.7);
+  animation: spin 680ms linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg);} }
+
+.palette-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.palette-list::-webkit-scrollbar {
+  width: 8px;
+}
+.palette-list::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.2);
+  border-radius: 999px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 22px;
+  transition: background-color 120ms ease;
+}
+.palette-row:hover {
+  background: rgba(255,255,255,0.06);
+}
+.palette-row--active {
+  background: rgba(130,80,255,0.18);
+}
+
+.palette-row-icon {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.75);
+}
+
+.palette-row-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.palette-row-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.96);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-subtitle {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-score {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+  width: 44px;
+  text-align: right;
+}
+
+.palette-footer {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 22px 18px;
+  font-size: 10px;
+  color: rgba(255,255,255,0.4);
+  letter-spacing: 0.08em;
+}
+
+.palette-footer--open {
+  display: flex;
+}
+
+.palette-footer-hint {
+  display: flex;
+  gap: 10px;
+}
+
+.palette-footer-brand {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .palette-footer-brand {
+    display: block;
+  }
+}
