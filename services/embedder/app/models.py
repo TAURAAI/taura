@@ -129,30 +129,38 @@ def load_model(device: str = None) -> None:
                     mean = list(t.mean)
                     std = list(t.std)
                     break
-        _preprocess = transforms.Compose([
+        # Base (original) preprocessing pipeline retained separately to avoid recursion
+        base_preprocess = transforms.Compose([
             transforms.Resize(TARGET_IMAGE_SIZE, interpolation=transforms.InterpolationMode.BICUBIC),
             transforms.CenterCrop(TARGET_IMAGE_SIZE),
             transforms.ToTensor(),
             transforms.Normalize(mean=mean, std=std),
         ])
 
-        # Create an adaptive preprocess for small images
-        def _adaptive_preprocess(img):
+        # Store on globals for potential external inspection / debug
+        globals()['_base_preprocess'] = base_preprocess  # type: ignore
+
+        # Adaptive wrapper: only resize/distort tiny images; never reference the wrapper itself
+        def _adaptive_preprocess(img: Image.Image):  # type: ignore
+            """Adaptive preprocessing.
+
+            - If the smallest side >= TARGET_IMAGE_SIZE -> use base pipeline (resize+center crop)
+            - If smaller -> upscale directly to square TARGET_IMAGE_SIZE (keeps it deterministic)
+            The previous version reassigned _preprocess then referenced it inside, causing infinite
+            recursion on large images. Here we always call base_preprocess explicitly.
+            """
             min_dim = min(img.width, img.height)
             if min_dim < TARGET_IMAGE_SIZE:
-                # For small images, resize to fill the target size (may change aspect ratio slightly)
-                transform = transforms.Compose([
+                # Fast path for small images (single resize to square)
+                return transforms.Compose([
                     transforms.Resize((TARGET_IMAGE_SIZE, TARGET_IMAGE_SIZE), interpolation=transforms.InterpolationMode.BICUBIC),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=mean, std=std),
-                ])
-            else:
-                # For large images, use the standard resize + crop
-                transform = _preprocess
-            return transform(img)
-        
-        # Replace the global preprocess function
-        globals()['_preprocess'] = _adaptive_preprocess
+                ])(img)
+            return base_preprocess(img)
+
+        # Expose adaptive as the active preprocess callable (not a Compose anymore)
+        globals()['_preprocess'] = _adaptive_preprocess  # type: ignore
 
         VISION_MODEL = model
         TEXT_MODEL = model
