@@ -32,10 +32,26 @@ def healthz():
 
 @app.post("/embed/text")
 def embed_text_endpoint(req: TextRequest):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    start_time = time.time()
+    text_preview = req.text[:100] + "..." if len(req.text) > 100 else req.text
+    logger.info(f"[EMBED_TEXT] Starting text embedding - text_length={len(req.text)}, preview='{text_preview}'")
+    
     if not req.text.strip():
+        logger.warning(f"[EMBED_TEXT] Empty text received")
         raise HTTPException(status_code=400, detail="text empty")
-    vec = embed_text(req.text)
-    return {"vec": vec}
+    
+    try:
+        vec = embed_text(req.text)
+        elapsed = time.time() - start_time
+        logger.info(f"[EMBED_TEXT] Successfully embedded text - dim={len(vec)}, elapsed={elapsed:.3f}s, norm={sum(x*x for x in vec)**0.5:.6f}")
+        return {"vec": vec}
+    except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"[EMBED_TEXT] Failed to embed text - error={str(e)}, elapsed={elapsed:.3f}s")
+        raise HTTPException(status_code=500, detail=f"embedding failed: {str(e)}")
 
 @app.post("/embed/text/batch")
 def embed_text_batch(req: TextBatchRequest):
@@ -48,39 +64,62 @@ async def embed_image(request: Request, file: UploadFile | None = File(None)):
 
     Accepts either multipart/form-data with a file upload OR application/json with {bytes_b64}.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    start_time = time.time()
     content_type = request.headers.get("content-type", "")
     data_bytes: bytes | None = None
+    source_info = ""
+
+    logger.info(f"[EMBED_IMAGE] Starting image embedding - content_type='{content_type}'")
 
     if "multipart/form-data" in content_type:
         if file is None:
+            logger.warning(f"[EMBED_IMAGE] No file provided in multipart request")
             raise HTTPException(status_code=400, detail="file missing")
         data_bytes = await file.read()
+        source_info = f"file={file.filename}, size={len(data_bytes)}"
+        logger.info(f"[EMBED_IMAGE] Received multipart file - {source_info}")
     else:
         try:
             payload = ImageEmbedJSON.parse_raw(await request.body())
         except Exception as e:
+            logger.error(f"[EMBED_IMAGE] Failed to parse JSON payload - error={str(e)}")
             raise HTTPException(status_code=400, detail=f"invalid json: {e}")
         if payload.bytes_b64:
             try:
                 data_bytes = base64.b64decode(payload.bytes_b64)
+                source_info = f"b64_length={len(payload.bytes_b64)}, decoded_size={len(data_bytes)}"
+                logger.info(f"[EMBED_IMAGE] Received base64 data - {source_info}")
             except Exception as e:
+                logger.error(f"[EMBED_IMAGE] Failed to decode base64 - error={str(e)}")
                 raise HTTPException(status_code=400, detail=f"b64 decode error: {e}")
         elif payload.uri:
             # Optional local file read (dev only). Use env ALLOW_LOCAL_URI=1 to enable for safety.
             if not os.environ.get("ALLOW_LOCAL_URI"):
+                logger.warning(f"[EMBED_IMAGE] URI access disabled - uri='{payload.uri}'")
                 raise HTTPException(status_code=400, detail="uri fetch disabled")
             if not os.path.exists(payload.uri):
+                logger.error(f"[EMBED_IMAGE] URI not found - uri='{payload.uri}'")
                 raise HTTPException(status_code=404, detail="uri not found")
             with open(payload.uri, "rb") as f:
                 data_bytes = f.read()
+            source_info = f"uri='{payload.uri}', size={len(data_bytes)}"
+            logger.info(f"[EMBED_IMAGE] Loaded from URI - {source_info}")
         else:
+            logger.warning(f"[EMBED_IMAGE] No data source provided")
             raise HTTPException(status_code=400, detail="provide bytes_b64 or uri")
 
     try:
         vec = embed_image_bytes(data_bytes)
+        elapsed = time.time() - start_time
+        logger.info(f"[EMBED_IMAGE] Successfully embedded image - {source_info}, dim={len(vec)}, elapsed={elapsed:.3f}s, norm={sum(x*x for x in vec)**0.5:.6f}")
+        return {"vec": vec}
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.error(f"[EMBED_IMAGE] Failed to embed image - {source_info}, error={str(e)}, elapsed={elapsed:.3f}s")
         raise HTTPException(status_code=400, detail=str(e))
-    return {"vec": vec}
 
 
 @app.post("/embed/image/batch", response_model=ImageBatchResponse)

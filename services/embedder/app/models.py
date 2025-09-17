@@ -176,37 +176,52 @@ def _project_embedding(vec: torch.Tensor) -> torch.Tensor:
 
 
 def embed_image_bytes(image_bytes: bytes) -> List[float]:
+    import logging
+    logger = logging.getLogger(__name__)
+    
     load_model()
+    logger.debug(f"[MODEL_EMBED_IMAGE] Processing image - size={len(image_bytes)} bytes")
+    
     img = load_and_preprocess(image_bytes)
+    logger.debug(f"[MODEL_EMBED_IMAGE] Image loaded - dimensions={img.size}, mode={img.mode}")
 
     enable_tta = os.environ.get("ENABLE_TTA", "1") != "0"
     max_ratio = float(os.environ.get("PANORAMA_MAX_RATIO", "2.6"))
+    logger.debug(f"[MODEL_EMBED_IMAGE] TTA enabled: {enable_tta}, max_ratio: {max_ratio}")
 
     tiles: List[Image.Image] = []
-    if img.width / max(img.height, 1) >= max_ratio:
-        n_tiles = 3 if img.width / max(img.height, 1) >= max_ratio * 1.5 else 2
+    aspect_ratio = img.width / max(img.height, 1)
+    if aspect_ratio >= max_ratio:
+        n_tiles = 3 if aspect_ratio >= max_ratio * 1.5 else 2
         tile_w = img.width // n_tiles
+        logger.debug(f"[MODEL_EMBED_IMAGE] Panorama detected - aspect_ratio={aspect_ratio:.2f}, n_tiles={n_tiles}")
         for i in range(n_tiles):
             left = i * tile_w
             right = img.width if i == n_tiles - 1 else (i + 1) * tile_w
             tiles.append(img.crop((left, 0, right, img.height)))
     else:
         tiles.append(img)
+    logger.debug(f"[MODEL_EMBED_IMAGE] Created {len(tiles)} tiles")
 
     crops = []
     target_side = CROP_SIZE
-    for base in tiles:
+    for tile_idx, base in enumerate(tiles):
         if enable_tta:
             try:
-                for c in transforms.FiveCrop(target_side)(base):
-                    crops.append(_preprocess(c))
-            except Exception:
+                tile_crops = list(transforms.FiveCrop(target_side)(base))
+                crops.extend([_preprocess(c) for c in tile_crops])
+                logger.debug(f"[MODEL_EMBED_IMAGE] Tile {tile_idx}: created {len(tile_crops)} TTA crops")
+            except Exception as e:
+                logger.warning(f"[MODEL_EMBED_IMAGE] TTA failed for tile {tile_idx}, using single crop: {e}")
                 crops.append(_preprocess(base))
         else:
             crops.append(_preprocess(base))
+            logger.debug(f"[MODEL_EMBED_IMAGE] Tile {tile_idx}: single crop (TTA disabled)")
 
     if not crops:
         raise ValueError("no crops produced")
+    
+    logger.debug(f"[MODEL_EMBED_IMAGE] Total crops: {len(crops)}, target_size: {target_side}")
 
     batch = torch.stack(crops)
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
@@ -214,6 +229,8 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     batch = batch.to(VISION_DEVICE, non_blocking=True)
     if AMP_DTYPE is not None:
         batch = batch.to(dtype=AMP_DTYPE)
+    
+    logger.debug(f"[MODEL_EMBED_IMAGE] Batch prepared - shape={batch.shape}, device={VISION_DEVICE}, dtype={batch.dtype}")
 
     amp_ctx = (
         torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
@@ -225,24 +242,39 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
             emb = VISION_MODEL.encode_image(batch)  # type: ignore[attr-defined]
             emb = F.normalize(emb, dim=-1).mean(0)
         emb = _project_embedding(emb)
-    return emb.cpu().tolist()
+    
+    result = emb.cpu().tolist()
+    logger.debug(f"[MODEL_EMBED_IMAGE] Generated embedding - dim={len(result)}, norm={sum(x*x for x in result)**0.5:.6f}")
+    return result
 
 
 def embed_text(text: str) -> List[float]:
+    import logging
+    logger = logging.getLogger(__name__)
+    
     load_model()
     text = (text or "").strip()
+    text_preview = text[:50] + "..." if len(text) > 50 else text
+    logger.debug(f"[MODEL_EMBED_TEXT] Processing text - length={len(text)}, preview='{text_preview}'")
+    
     if not text:
         if TARGET_DIM is None:
             raise RuntimeError("model not initialised")
+        logger.debug(f"[MODEL_EMBED_TEXT] Empty text, returning zero vector - dim={TARGET_DIM}")
         return [0.0] * TARGET_DIM
 
     ctx_len = getattr(TEXT_MODEL, "context_length", 77)
+    logger.debug(f"[MODEL_EMBED_TEXT] Tokenizing with context_length={ctx_len}")
+    
     with torch.no_grad():
         tokens = TEXT_TOKENIZER([text], context_length=ctx_len)  # type: ignore
         if hasattr(tokens, "to"):
             tokens = tokens.to(VISION_DEVICE, non_blocking=True)  # type: ignore
         elif isinstance(tokens, (list, tuple)):
             tokens = torch.tensor(tokens, device=VISION_DEVICE, dtype=torch.long)
+        
+        logger.debug(f"[MODEL_EMBED_TEXT] Tokens shape: {tokens.shape if hasattr(tokens, 'shape') else type(tokens)}, device={VISION_DEVICE}")
+        
         amp_ctx = (
             torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
             if AMP_DTYPE is not None and VISION_DEVICE and VISION_DEVICE.startswith("cuda")
@@ -252,4 +284,7 @@ def embed_text(text: str) -> List[float]:
             emb = TEXT_MODEL.encode_text(tokens)  # type: ignore[attr-defined]
             v = F.normalize(emb, dim=-1)[0]
         v = _project_embedding(v)
-    return v.cpu().tolist()
+    
+    result = v.cpu().tolist()
+    logger.debug(f"[MODEL_EMBED_TEXT] Generated embedding - dim={len(result)}, norm={sum(x*x for x in result)**0.5:.6f}")
+    return result
