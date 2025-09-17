@@ -1,7 +1,7 @@
 use tauri::Manager;
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 use std::process::Command;
 use walkdir::WalkDir;
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 
@@ -135,8 +135,7 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, S
 #[tauri::command]
 async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
   if let Some(overlay_window) = app.get_webview_window("overlay") {
-    let is_visible = overlay_window.is_visible().map_err(|e| e.to_string())?;
-    if is_visible {
+    if overlay_window.is_visible().map_err(|e| e.to_string())? {
       overlay_window.hide().map_err(|e| e.to_string())?;
     } else {
       overlay_window.show().map_err(|e| e.to_string())?;
