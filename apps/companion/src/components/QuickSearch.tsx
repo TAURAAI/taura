@@ -31,10 +31,10 @@ export function QuickSearch({ userId, onResults }: QuickSearchProps) {
       } finally { setLoading(false) }
     }, 200)
     return () => { if (dRef.current) window.clearTimeout(dRef.current) }
-  }, [query, config.userId, userId])
+  }, [query, config.userId, userId, onResults])
 
   return (
-    <div className="glass-card p-5 flex flex-col gap-4" aria-labelledby="quick-search-heading">
+    <div className="glass-card quick-search-card p-5 flex flex-col gap-4" aria-labelledby="quick-search-heading">
       <div className="flex items-center justify-between">
         <h2 id="quick-search-heading" className="text-base font-medium text-white">Quick Search</h2>
         <button onClick={() => invoke('toggle_overlay').catch(()=>{})} className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition">Open Overlay</button>

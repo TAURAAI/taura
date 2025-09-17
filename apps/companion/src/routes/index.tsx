@@ -6,6 +6,7 @@ import { QuickSearch } from '../components/QuickSearch'
 import { RecentItems } from '../components/RecentItems'
 import { fetchStats } from '../api'
 import { useAppConfig } from '../state/config'
+import { setRootPath, startFullScan } from '../indexer'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -21,6 +22,43 @@ function HomeScreen() {
   const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
   const config = useAppConfig()
+  const quickActions = [
+    {
+      title: 'Open Command Overlay',
+      description: 'Launch the universal palette (⌘⌥K) to search photos, PDFs, and transcripts.',
+      icon: (
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+          <rect x="3" y="3" width="18" height="18" rx="4" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h8" />
+        </svg>
+      ),
+      action: () => invoke('toggle_overlay').catch(() => {}),
+      cta: 'Open overlay',
+    },
+    {
+      title: 'Rescan Library',
+      description: 'Trigger a fresh pass over your root folder to catch new or updated media.',
+      icon: (
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 15a7 7 0 0110-9l4 4M19 9a7 7 0 01-10 9l-4-4" />
+        </svg>
+      ),
+      action: () => startFullScan().catch(() => {}),
+      cta: 'Rescan now',
+    },
+    {
+      title: 'Set Root Folder',
+      description: 'Point Taura at the directory you want indexed. Photos and PDFs remain local.',
+      icon: (
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h4l2-2h6l2 2h4v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+        </svg>
+      ),
+      action: () => invoke('pick_folder').then((res: any) => { if (res) setRootPath(String(res)).catch(() => {}) }).catch(() => {}),
+      cta: 'Choose folder',
+    },
+  ]
 
   useEffect(() => {
     checkServerStatus()
@@ -50,50 +88,88 @@ function HomeScreen() {
     }
   }
 
-  async function handleQuickOverlay() {
-    try {
-      await invoke('toggle_overlay')
-    } catch (e) {
-      console.error('Failed to toggle overlay:', e)
-    }
-  }
-
   return (
     <AppShell>
-      <header className="mb-6">
-        <h1 className="heading-xl mb-1">Home</h1>
-        <p className="muted text-sm">Search and manage your indexed media.</p>
-      </header>
-      <div className="grid gap-6 md:grid-cols-3 mb-8">
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] uppercase tracking-wide text-white/50">Indexed</span>
-            <span className="metric-chip capitalize">{serverStatus}</span>
+      <div className="home-hero">
+        <div className="hero-card">
+          <div className="hero-content">
+            <div className="hero-label">Semantic Recall</div>
+            <h1 className="hero-title">Find any memory in milliseconds.</h1>
+            <p className="hero-subtitle">Taura watches your folders, embeds media on the GPU, and returns the right photo, PDF page, or transcript as you type.</p>
+            <div className="hero-pills">
+              <span className="hero-pill">
+                <strong>{stats.filesIndexed.toLocaleString()}</strong>
+                <span>Indexed items</span>
+              </span>
+              <span className="hero-pill">
+                <strong className={serverStatus === 'online' ? 'text-emerald-300' : 'text-amber-200'}>{serverStatus}</strong>
+                <span>Gateway</span>
+              </span>
+              <span className="hero-pill">
+                <strong>{config.privacyMode === 'strict-local' ? 'Local only' : 'Hybrid'}</strong>
+                <span>Privacy mode</span>
+              </span>
+            </div>
+            <div className="hero-actions">
+              <button className="btn-primary" onClick={() => invoke('toggle_overlay').catch(() => {})}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3" />
+                </svg>
+                Summon overlay
+              </button>
+              <button className="btn-outline" onClick={() => invoke('open_settings_window').catch(() => {})}>Open settings</button>
+            </div>
           </div>
-          <div className="text-3xl font-semibold mb-1">{stats.filesIndexed.toLocaleString()}</div>
-          <div className="text-xs text-white/40">{stats.lastIndexed ? `Last: ${stats.lastIndexed}` : 'No embeddings yet'}</div>
-          <div className="text-[11px] text-white/30 mt-1">Media: {stats.totalMedia.toLocaleString()}</div>
-        </div>
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] uppercase tracking-wide text-white/50">Server</span>
+          <div className="hero-stats glass-card">
+            <div>
+              <span className="stat-label">Last embed</span>
+              <div className="stat-value">{stats.lastIndexed || 'pending'}</div>
+            </div>
+            <div>
+              <span className="stat-label">Total media tracked</span>
+              <div className="stat-value">{stats.totalMedia.toLocaleString()}</div>
+            </div>
+            <div>
+              <span className="stat-label">Server URL</span>
+              <div className="stat-value text-xs text-white/60 truncate" title={config.serverUrl}>{config.serverUrl}</div>
+            </div>
           </div>
-          <div className="text-2xl font-semibold mb-1 capitalize">{serverStatus}</div>
-          <div className="text-[11px] text-white/40">Health polled</div>
-          <button onClick={handleQuickOverlay} className="mt-3 btn-outline h-8 px-3 text-xs">Overlay</button>
-        </div>
-        <div className="glass-card p-5">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-[11px] uppercase tracking-wide text-white/50">Mode</span>
-          </div>
-          <div className="text-2xl font-semibold mb-1">Semantic</div>
-          <div className="text-[11px] text-white/40">Vector recall active</div>
-          <button onClick={() => invoke('open_settings_window').catch(()=>{})} className="mt-3 btn-outline h-8 px-3 text-xs">Settings</button>
         </div>
       </div>
-      <div className="grid gap-6 md:grid-cols-2 mb-8">
-        <QuickSearch />
-        <RecentItems />
+
+      <div className="home-grid">
+        <section className="home-left">
+          <div className="section-heading">
+            <h2>Quick actions</h2>
+            <p>Stay in flow with one-tap commands.</p>
+          </div>
+          <div className="action-stack">
+            {quickActions.map((action) => (
+              <button key={action.title} className="action-card" onClick={action.action}>
+                <span className="action-icon">{action.icon}</span>
+                <span className="action-body">
+                  <span className="action-title">{action.title}</span>
+                  <span className="action-subtitle">{action.description}</span>
+                </span>
+                <span className="action-cta">{action.cta}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="section-heading mt-10">
+            <h2>Recent results</h2>
+            <p>Your latest matches across photos and docs.</p>
+          </div>
+          <RecentItems />
+        </section>
+
+        <section className="home-right">
+          <div className="section-heading">
+            <h2>Try it now</h2>
+            <p>Search your library without leaving the desktop.</p>
+          </div>
+          <QuickSearch userId={config.userId} />
+        </section>
       </div>
     </AppShell>
   )

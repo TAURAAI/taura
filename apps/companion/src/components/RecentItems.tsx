@@ -33,7 +33,7 @@ export function RecentItems() {
   }, [])
 
   return (
-    <div className="glass-card p-5 flex flex-col gap-4" aria-labelledby="recent-items-heading">
+    <div className="glass-card recent-card p-5 flex flex-col gap-4" aria-labelledby="recent-items-heading">
       <div className="flex items-center justify-between">
         <h2 id="recent-items-heading" className="text-base font-medium text-white">Recent Items</h2>
         <span className="text-[10px] text-white/40 uppercase tracking-wide">Alpha</span>
