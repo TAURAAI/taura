@@ -34,7 +34,7 @@ VISION_DEVICE: Optional[str] = None
 TEXT_MODEL: Optional[nn.Module] = None
 TEXT_TOKENIZER: Optional[callable] = None
 TARGET_DIM: Optional[int] = None
-MODEL_ID: str = os.environ.get("VISION_MODEL_ID", "hf-hub:timm/ViT-L-14-SigLIP-384")
+MODEL_ID: str = os.environ.get("VISION_MODEL_ID", "hf-hub:timm/ViT-L-14-SigLip-384")
 TARGET_IMAGE_SIZE: int = int(os.environ.get("VISION_SIZE", "576"))
 CROP_SIZE: int = int(os.environ.get("TTA_CROP_SIZE", os.environ.get("VISION_SIZE", "576")))
 
@@ -88,8 +88,12 @@ def load_model(device: str = "cuda" if torch.cuda.is_available() else "cpu") -> 
                 dim = int(os.environ.get("EMBED_DIM", "768"))
             TARGET_DIM = int(dim)
         except Exception as e:  # pragma: no cover
-            print(f"[embedder] open-clip vision load failed: {e}")
-            raise e
+            hint = (
+                "Set VISION_MODEL_ID to a reachable checkpoint or export HF_TOKEN if the repo is gated. "
+                "Current MODEL_ID='" + MODEL_ID + "'."
+            )
+            print(f"[embedder] open-clip vision load failed: {e}\n{hint}")
+            raise RuntimeError(f"failed to load model '{MODEL_ID}': {e}") from e
 
 
 def load_and_preprocess(image_bytes: bytes) -> Image.Image:

@@ -31,9 +31,10 @@ docker run --gpus all -p 9000:9000 embedder:dev
 
 ## Environment
 
-- `VISION_MODEL_ID` (default `hf-hub:timm/ViT-L-14-SigLIP-384`)
+- `VISION_MODEL_ID` (default `hf-hub:timm/ViT-L-14-SigLip-384`)
 - `VISION_SIZE` (default `576`)
 - `TTA_CROP_SIZE` (defaults to `VISION_SIZE`)
+- Models hosted on Hugging Face may require a valid `HF_TOKEN`; export it inside the container (`export HF_TOKEN=...`) before starting the server if you see 401 errors.
 
 ## TODO (Upgrade to Production)
 - Add batching scheduler combining incoming requests within 10-20ms window
