@@ -1,0 +1,20 @@
+{
+  "description": "Example evaluation dataset for Taura retrieval.",
+  "queries": [
+    {
+      "text": "paris trip eiffel",
+      "expected": [
+        "C:/Users/you/Pictures/ParisTrip/IMG_1024.jpg",
+        "C:/Users/you/Documents/Travel/Paris Itinerary.pdf"
+      ],
+      "top_k": 12
+    },
+    {
+      "text": "passport scan",
+      "expected": [
+        "C:/Users/you/Documents/Identity/passport_scan.pdf"
+      ]
+    }
+  ]
+}
+
