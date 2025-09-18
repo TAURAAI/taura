@@ -112,7 +112,7 @@ func PostSync(c *fiber.Ctx) error {
 		if inserted { upserted++ }
 		lower := strings.ToLower(item.Modality)
 		if lower == "image" || lower == "pdf_page" {
-			if strings.HasPrefix(item.URI, "C:\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
+			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
 				bytes, readErr := os.ReadFile(item.URI)
 				if readErr != nil { /* silent */ } else if len(bytes) > 0 {
 					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
