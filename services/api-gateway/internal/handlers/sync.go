@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/TAURAAI/taura/api-gateway/internal/db"
 	"github.com/TAURAAI/taura/api-gateway/internal/embed"
 	"github.com/gofiber/fiber/v2"
@@ -110,14 +111,19 @@ func PostSync(c *fiber.Ctx) error {
 		err := database.Pool.QueryRow(ctx, mediaUpsertStmt, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID, &inserted)
 		if err != nil {
 			var pgErr *pgconn.PgError
-			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unexpected duplicate (race) should be rare now
-				// fallback re-select
-				if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2`, userUUID, item.URI).Scan(&mediaID); selErr != nil { log.Printf("media select after dup race uri=%s err=%v", item.URI, selErr); continue }
-			} else {
-				log.Printf("media upsert unexpected error uri=%s err=%v", item.URI, err)
-				continue
+			if errors.As(err, &pgErr) {
+				if pgErr.Code == "23505" { // duplicate (should be handled by ON CONFLICT) silently ignore
+					if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2`, userUUID, item.URI).Scan(&mediaID); selErr != nil { continue }
+					inserted = false
+					// no log noise
+					goto afterUpsert
+				}
 			}
+			// unexpected error
+			log.Printf("media upsert error uri=%s err=%v", item.URI, err)
+			continue
 		}
+	afterUpsert:
 		if inserted { upserted++ }
 		lower := strings.ToLower(item.Modality)
 		if lower == "image" || lower == "pdf_page" {
