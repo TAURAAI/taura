@@ -1,21 +1,22 @@
 package handlers
 
 import (
-  "context"
-  "fmt"
-  "github.com/TAURAAI/taura/api-gateway/internal/db"
-  "github.com/TAURAAI/taura/api-gateway/internal/embed"
-  "github.com/gofiber/fiber/v2"
-  "github.com/google/uuid"
-  "io/ioutil"
-  "log"
-  "strings"
-  "time"
+	"context"
+	"errors"
+	"github.com/TAURAAI/taura/api-gateway/internal/db"
+	"github.com/TAURAAI/taura/api-gateway/internal/embed"
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5"
+	"io/ioutil"
+	"log"
+	"strings"
+	"time"
 )
 
-// Simplified: no large enclosing transaction. Each item upserts independently so a single failure
-// does not trigger 25P02 cascading aborted transaction errors. This trades atomic multi-item ingest
-// for robustness and clearer logs.
+// Simplified: per-item upsert (no encompassing transaction). Duplicate key conflicts are handled by
+// ON CONFLICT DO UPDATE and never escalate to 23505 spam. We only log unexpected errors.
 
 type MediaUpsert struct {
 	UserID   string   `json:"user_id"`
@@ -42,26 +43,45 @@ func PostSync(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
 	}
 
-	// --- Pre-resolve any non-UUID user identifiers (treated as email) outside the media transaction ---
-	userMap := make(map[string]string) // external -> uuid
+	// --- Pre-resolve user identifiers (email -> uuid) ---
+	userMap := make(map[string]string)
+	ctx := context.Background()
 	for _, item := range req.Items {
 		if item.UserID == "" { continue }
-		if _, ok := userMap[item.UserID]; ok { continue }
+		if _, seen := userMap[item.UserID]; seen { continue }
 		if _, err := uuid.Parse(item.UserID); err == nil {
 			userMap[item.UserID] = item.UserID
 			continue
 		}
-		// Resolve via upsert outside big media tx to isolate errors
-		var resolved string
-		uq := `INSERT INTO users (email) VALUES ($1)
-				ON CONFLICT (email) DO UPDATE SET email=EXCLUDED.email RETURNING id`
-		if err := database.Pool.QueryRow(context.Background(), uq, item.UserID).Scan(&resolved); err != nil {
-			log.Printf("user pre-resolve failed ext=%s err=%v", item.UserID, err)
-			continue // leave unresolved; item will be skipped later
+		// SELECT first to avoid unnecessary writes
+		var existing string
+		selectErr := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, item.UserID).Scan(&existing)
+		if selectErr == nil {
+			userMap[item.UserID] = existing
+			continue
 		}
-		userMap[item.UserID] = resolved
+		if !errors.Is(selectErr, pgx.ErrNoRows) {
+			log.Printf("user lookup error ext=%s err=%v", item.UserID, selectErr)
+			continue
+		}
+		// Insert; if race duplicates, fallback to select again
+		var insertedID string
+		insErr := database.Pool.QueryRow(ctx, `INSERT INTO users (email) VALUES ($1) RETURNING id`, item.UserID).Scan(&insertedID)
+		if insErr != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(insErr, &pgErr) && pgErr.Code == "23505" {
+				if err2 := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, item.UserID).Scan(&insertedID); err2 != nil {
+					log.Printf("user resolve race select failed ext=%s err=%v", item.UserID, err2)
+					continue
+				}
+			} else {
+				log.Printf("user insert unexpected error ext=%s err=%v", item.UserID, insErr)
+				continue
+			}
+		}
+		userMap[item.UserID] = insertedID
 	}
-	ctx := context.Background()
+
 	upserted := 0
 	type pendingImage struct {
 		mediaID string
@@ -69,45 +89,46 @@ func PostSync(c *fiber.Ctx) error {
 		bytes   []byte
 	}
 	var pending []pendingImage
+	// Single upsert statement always returning id + inserted flag.
+	mediaUpsertStmt := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (user_id, uri) DO UPDATE SET
+		  ts = COALESCE(EXCLUDED.ts, media.ts),
+		  album = COALESCE(EXCLUDED.album, media.album),
+		  source = COALESCE(EXCLUDED.source, media.source),
+		  lat = COALESCE(EXCLUDED.lat, media.lat),
+		  lon = COALESCE(EXCLUDED.lon, media.lon)
+		RETURNING id, (xmax = 0) AS inserted` // xmax=0 heuristic: true for freshly inserted row
+
 	for _, item := range req.Items {
-    if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
-    userUUID, ok := userMap[item.UserID]; if !ok { continue }
-
-    var tsPtr *time.Time
-    if item.TS != nil && *item.TS != "" {
-      if t, err := time.Parse(time.RFC3339, *item.TS); err == nil { tsPtr = &t }
-    }
-
-    // Perform upsert in two steps: try insert RETURNING id; if no row (ON CONFLICT) select id.
-    var mediaID string
-    insertStmt := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-                   ON CONFLICT (user_id, uri) DO NOTHING
-                   RETURNING id`
-    if err := database.Pool.QueryRow(ctx, insertStmt, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID); err != nil {
-      // Assume conflict/no row; fetch existing
-      if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI).Scan(&mediaID); selErr != nil {
-        log.Printf("media upsert failed uri=%s err=%v", item.URI, selErr)
-        continue
-      }
-    } else {
-      upserted++
-    }
-
-    lower := strings.ToLower(item.Modality)
-    if lower == "image" || lower == "pdf_page" {
-      if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
-        bytes, readErr := ioutil.ReadFile(item.URI)
-        if readErr != nil {
-          log.Printf("read file for embed failed uri=%s err=%v", item.URI, readErr)
-        } else if len(bytes) == 0 {
-          log.Printf("skip embed for empty file uri=%s", item.URI)
-        } else {
-          pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
-        }
-      }
-    }
-  }
+		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
+		userUUID, ok := userMap[item.UserID]; if !ok { continue }
+		var tsPtr *time.Time
+		if item.TS != nil && *item.TS != "" { if t, err := time.Parse(time.RFC3339, *item.TS); err == nil { tsPtr = &t } }
+		var mediaID string
+		var inserted bool
+		err := database.Pool.QueryRow(ctx, mediaUpsertStmt, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID, &inserted)
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" { // unexpected duplicate (race) should be rare now
+				// fallback re-select
+				if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2`, userUUID, item.URI).Scan(&mediaID); selErr != nil { log.Printf("media select after dup race uri=%s err=%v", item.URI, selErr); continue }
+			} else {
+				log.Printf("media upsert unexpected error uri=%s err=%v", item.URI, err)
+				continue
+			}
+		}
+		if inserted { upserted++ }
+		lower := strings.ToLower(item.Modality)
+		if lower == "image" || lower == "pdf_page" {
+			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
+				bytes, readErr := ioutil.ReadFile(item.URI)
+				if readErr != nil { /* silent for common unreadable; optionally log at debug */ } else if len(bytes) > 0 {
+					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
+				}
+			}
+		}
+	}
 
 	// Batch embed after commit to reduce DB lock time
 	const chunk = 16
