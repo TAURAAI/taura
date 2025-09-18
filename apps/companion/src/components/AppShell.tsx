@@ -1,5 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router'
-import { PropsWithChildren, ReactNode, useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import type { PropsWithChildren, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
 export type NavItem = { label: string; to: string; icon: ReactNode }

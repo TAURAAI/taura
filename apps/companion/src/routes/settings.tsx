@@ -9,28 +9,11 @@ export const Route = createFileRoute('/settings')({
   component: SettingsApp,
 })
 
-type ScannedItem = {
-  path: string
-  size: number
-  modified?: string
-  modality: 'image' | 'pdf_page' | 'video' | string
-  lat?: number
-  lon?: number
-  timestamp?: string
-}
-
-type ScanResponse = {
-  count: number
-  items: ScannedItem[]
-}
 
 function SettingsApp() {
   const [selectedFolder, setSelectedFolder] = useState<string>('') // will sync from store/root loader
   const [, forceRerender] = useState(0)
-  const [isScanning, setIsScanning] = useState(false)
-  const [scanResults, setScanResults] = useState<ScanResponse | null>(null)
-  const [isIndexing, setIsIndexing] = useState(false)
-  const [indexProgress, setIndexProgress] = useState(0)
+  // legacy manual scanning/indexing states removed (automatic system in indexer.ts)
   const config = useAppConfig()
   const [configDraft, setConfigDraft] = useState({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
 
@@ -69,68 +52,7 @@ function SettingsApp() {
     }
   }
 
-  async function handleScanFolder() {
-    if (!selectedFolder) return
-    
-    setIsScanning(true)
-    try {
-      const result = await invoke<ScanResponse>('scan_folder', {
-        path: selectedFolder,
-        maxSamples: 1000,
-      })
-      setScanResults(result)
-    } catch (e) {
-      console.error('Scan failed:', e)
-    } finally {
-      setIsScanning(false)
-    }
-  }
-
-  async function handleStartIndexing() {
-    if (!scanResults) return
-
-    setIsIndexing(true)
-    setIndexProgress(0)
-
-    try {
-      const chunkSize = 50
-      const chunks = []
-      for (let i = 0; i < scanResults.items.length; i += chunkSize) {
-        chunks.push(scanResults.items.slice(i, i + chunkSize))
-      }
-
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i]
-        try {
-          const payload = {
-            items: chunk.map((item) => ({
-              user_id: config.userId,
-              modality: item.modality,
-              uri: item.path,
-              ts: item.modified,
-              lat: item.lat,
-              lon: item.lon,
-              timestamp: item.timestamp,
-            })),
-          }
-
-          await invoke<number>('sync_index', {
-            serverUrl: config.serverUrl.replace(/\/$/, ''),
-            payload,
-          })
-          
-          setIndexProgress(((i + 1) / chunks.length) * 100)
-        } catch (e) {
-          console.warn('Failed to sync chunk:', e)
-        }
-      }
-    } catch (e) {
-      console.error('Indexing failed:', e)
-    } finally {
-      setIsIndexing(false)
-      setIndexProgress(0)
-    }
-  }
+  // manual scan/index removed; automatic background system handles enumeration + syncing
 
   async function handleShowOverlay() {
     try {
@@ -143,14 +65,14 @@ function SettingsApp() {
   // subscribe to indexer store for live updates
   useEffect(() => {
     const unsub = indexerStore.subscribe(() => forceRerender(x => x + 1))
-    return () => unsub()
+    return () => { unsub() }
   }, [])
 
   const idx = indexerStore.get()
   // keep local selectedFolder in sync if store root changes externally (e.g., pendingRoot applied)
   useEffect(() => {
     if (idx.rootPath && idx.rootPath !== selectedFolder) setSelectedFolder(idx.rootPath)
-  }, [idx.rootPath])
+  }, [idx.rootPath, selectedFolder])
   const scanIndeterminate = idx.scan && idx.scan.total === 0 && idx.phase === 'scanning'
   const scanPct = !scanIndeterminate && idx.scan && idx.scan.total > 0 ? Math.min(100, (idx.scan.processed / idx.scan.total) * 100) : 0
   const throttleMs = Number(localStorage.getItem('taura.scan.throttle.ms') || '0')
@@ -256,7 +178,7 @@ function SettingsApp() {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-white/40 text-[11px] uppercase tracking-wide">Server URL</label>
-                <input type="text" defaultValue="http://localhost:8080" className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                <input type="text" defaultValue="https://unipool.acm.today" className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
               </div>
             </div>
           </div>

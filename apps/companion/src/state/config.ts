@@ -11,7 +11,7 @@ export interface AppConfig {
 const STORAGE_KEY = 'taura.config.v1'
 
 const DEFAULT_CONFIG: AppConfig = {
-  serverUrl: 'http://localhost:8080',
+  serverUrl: 'https://unipool.acm.today',
   userId: 'user',
   privacyMode: 'hybrid',
 }
