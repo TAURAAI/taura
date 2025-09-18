@@ -31,7 +31,7 @@ export function QuickSearch({ userId, onResults }: QuickSearchProps) {
       } finally { setLoading(false) }
     }, 200)
     return () => { if (dRef.current) window.clearTimeout(dRef.current) }
-  }, [query, config.userId, userId, onResults])
+  }, [query, config.userId, userId])
 
   return (
     <div className="glass-card quick-search-card p-5 flex flex-col gap-4" aria-labelledby="quick-search-heading">

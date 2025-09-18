@@ -44,7 +44,7 @@ function HomeScreen() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M5 15a7 7 0 0110-9l4 4M19 9a7 7 0 01-10 9l-4-4" />
         </svg>
       ),
-      action: () => startFullScan().catch(() => {}),
+      action: () => startFullScan().catch(() => {}).finally(() => setTimeout(() => loadStats(), 600)),
       cta: 'Rescan now',
     },
     {
@@ -55,7 +55,12 @@ function HomeScreen() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h4l2-2h6l2 2h4v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
         </svg>
       ),
-      action: () => invoke('pick_folder').then((res: any) => { if (res) setRootPath(String(res)).catch(() => {}) }).catch(() => {}),
+      action: () => invoke('pick_folder')
+        .then((res: any) => {
+          if (!res) return
+          return setRootPath(String(res)).catch(() => {}).finally(() => setTimeout(() => loadStats(), 1200))
+        })
+        .catch(() => {}),
       cta: 'Choose folder',
     },
   ]

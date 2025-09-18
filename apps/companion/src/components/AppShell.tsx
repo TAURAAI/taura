@@ -2,30 +2,18 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { PropsWithChildren, ReactNode, useEffect, useState, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 
-export type NavItem = { label: string; to: string; icon?: ReactNode; description?: string }
+export type NavItem = { label: string; to: string; icon: ReactNode }
 
 const nav: NavItem[] = [
-  {
-    label: 'Home',
-    to: '/',
-    description: 'Overview & quick actions',
-    icon: (
-      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l9-9 9 9M5 10v9a2 2 0 002 2h10a2 2 0 002-2v-9" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Settings',
-    to: '/settings',
-    description: 'Folders, server, privacy',
-    icon: (
-      <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M11.983 19.75a7.75 7.75 0 110-15.5 7.75 7.75 0 010 15.5z" />
-        <circle cx="12" cy="12" r="2.5" />
-      </svg>
-    ),
-  },
+  { label: 'Home', to: '/', icon: (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l9-9 9 9M5 10v9a2 2 0 002 2h10a2 2 0 002-2v-9" />
+    </svg>) },
+  { label: 'Settings', to: '/settings', icon: (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11.983 19.75a7.75 7.75 0 110-15.5 7.75 7.75 0 010 15.5z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </svg>) },
 ]
 
 export function AppShell({ children, footer }: PropsWithChildren<{ footer?: ReactNode }>) {
@@ -61,38 +49,22 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
     <div className={`layout-shell${collapsed ? ' sidebar-collapsed' : ''}`}> 
       <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
         <div className="sidebar-brand shadow-md">
-          <div className="sidebar-logo">
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+          <button className="sidebar-logo" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}>
+            <svg className="w-5 h-5" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth={1.6}>
+              <circle cx="16" cy="16" r="10" stroke="url(#g1)" />
+              <path d="M11.5 16.2l3.2 3.4 5.8-7.3" strokeLinecap="round" strokeLinejoin="round" />
+              <defs>
+                <linearGradient id="g1" x1="6" y1="6" x2="26" y2="26" gradientUnits="userSpaceOnUse">
+                  <stop stopColor="#6366f1" />
+                  <stop offset="1" stopColor="#a855f7" />
+                </linearGradient>
+              </defs>
             </svg>
-          </div>
+          </button>
           <div className="sidebar-brand-text">
             <span className="block text-sm font-semibold text-white tracking-tight select-none">Taura</span>
             <span className="block text-[11px] text-white/45 leading-snug select-none">Multimodal Recall</span>
           </div>
-          <button
-            type="button"
-            onClick={toggleSidebar}
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="sidebar-toggle"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9}>
-              {collapsed ? (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 12h16M10 6l-6 6 6 6" />
-              ) : (
-                <path strokeLinecap="round" strokeLinejoin="round" d="M20 12H4m10 6l6-6-6-6" />
-              )}
-            </svg>
-          </button>
-          <button
-            type="button"
-            className="nav-palette" onClick={() => invoke('toggle_overlay').catch(() => {})}
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3" />
-            </svg>
-            <span>Open Command</span>
-          </button>
         </div>
         <nav className="sidebar-nav" aria-label="Navigation">
           {nav.map((item) => (
@@ -101,22 +73,26 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
               to={item.to}
               className={`nav-item ${isActive(item.to) ? 'active' : ''}`}
               title={collapsed ? item.label : undefined}
+              aria-current={isActive(item.to) ? 'page' : undefined}
             >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-text flex-1">
-                <span className="block text-sm font-medium text-white/90 nav-label">{item.label}</span>
-                {item.description && (
-                  <span className="block text-[11px] text-white/40 mt-[2px] nav-desc">{item.description}</span>
-                )}
-              </span>
-              <svg className="w-3 h-3 text-white/25 nav-caret" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M7 5l5 5-5 5" />
-              </svg>
+              <span className="nav-icon" aria-hidden="true">{item.icon}</span>
+              <span className="nav-text flex-1 block text-sm font-medium text-white/90 nav-label">{item.label}</span>
             </Link>
           ))}
         </nav>
         <div className="sidebar-footer">
-          <div className="text-[11px] text-white/40">v0.1.0</div>
+          <button
+            type="button"
+            className="footer-command"
+            onClick={() => invoke('toggle_overlay').catch(() => {})}
+            aria-label="Open Command Palette"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3" />
+            </svg>
+            <span className="hidden sm:inline">Command</span>
+          </button>
+          <div className="text-[11px] text-white/40 ml-auto">v0.1.0</div>
           {footer}
         </div>
       </aside>
