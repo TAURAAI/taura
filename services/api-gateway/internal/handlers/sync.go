@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// NOTE: We use a savepoint per item so a single bad record does not poison the whole transaction.
+// Always rollback to the item's savepoint on ANY error that could set the tx in failed state
+// before attempting further statements. Otherwise PostgreSQL returns 25P02 and ignores subsequent commands.
+
 type MediaUpsert struct {
 	UserID   string   `json:"user_id"`
 	Modality string   `json:"modality"`
@@ -90,28 +94,27 @@ func PostSync(c *fiber.Ctx) error {
 					RETURNING id`
 		errIns := tx.QueryRow(ctx, insertMedia, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID)
 		if errIns != nil {
-			pgErr, ok := errIns.(*pgconn.PgError)
-			if ok && (pgErr.Code == "42P10" || pgErr.Code == "42P01") { // no unique constraint / invalid
-				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
-				if errSel := row.Scan(&mediaID); errSel != nil {
-					plain := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
-								VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`
-					if errPlain := tx.QueryRow(ctx, plain, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID); errPlain != nil {
-						log.Printf("media insert error (no unique index) uri=%s err=%v", item.URI, errPlain)
-						tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName)
-						continue
-					}
-				} // else mediaID fetched
-			} else {
-				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
-				if errSel := row.Scan(&mediaID); errSel != nil {
-					log.Printf("media insert error uri=%s err=%v", item.URI, errIns)
-					tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName)
+			// Expected conflict path: ErrNoRows (no RETURNING row) -> fetch existing id.
+			// Any other error would have put tx into error state; rollback to savepoint first.
+			rollbackNeeded := true
+			if pgErr, ok := errIns.(*pgconn.PgError); ok {
+				// ErrNoRows is not a PgError; so any PgError triggers rollback.
+				log.Printf("media insert pg error uri=%s code=%s msg=%s", item.URI, pgErr.Code, pgErr.Message)
+			}
+			if rollbackNeeded {
+				if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName); rbErr != nil {
+					log.Printf("rollback to savepoint failed idx=%d err=%v", idx, rbErr)
 					continue
 				}
 			}
+			// After rollback we are clean; attempt to select existing media id (if it was just a conflict or prior row exists)
+			row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
+			if errSel := row.Scan(&mediaID); errSel != nil {
+				log.Printf("media select after rollback failed uri=%s err=%v", item.URI, errSel)
+				continue
+			}
 		} else {
-			upserted++
+			upserted++ // newly inserted
 		}
 
 		lowerMod := strings.ToLower(item.Modality)
