@@ -13,6 +13,7 @@ import (
 	"io/ioutil"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -34,6 +35,8 @@ type SyncRequest struct {
 	Items []MediaUpsert `json:"items"`
 }
 
+var syncVersionOnce sync.Once
+
 func PostSync(c *fiber.Ctx) error {
 	var req SyncRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -44,43 +47,26 @@ func PostSync(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
 	}
 
-	// --- Pre-resolve user identifiers (email -> uuid) ---
-	userMap := make(map[string]string)
+	syncVersionOnce.Do(func(){ log.Printf("/sync handler revision=3 (conflict-safe CTE upserts)") })
+
 	ctx := context.Background()
-	for _, item := range req.Items {
-		if item.UserID == "" { continue }
-		if _, seen := userMap[item.UserID]; seen { continue }
-		if _, err := uuid.Parse(item.UserID); err == nil {
-			userMap[item.UserID] = item.UserID
-			continue
+
+	resolveUser := func(raw string) (string, bool) {
+		if raw == "" { return "", false }
+		if _, err := uuid.Parse(raw); err == nil { return raw, true }
+		var id string
+		cte := `WITH ins AS (
+			INSERT INTO users (email) VALUES ($1)
+			ON CONFLICT (email) DO NOTHING
+			RETURNING id)
+		SELECT id FROM ins
+		UNION ALL
+		SELECT id FROM users WHERE email=$1
+		LIMIT 1`
+		if err := database.Pool.QueryRow(ctx, cte, raw).Scan(&id); err != nil {
+			return "", false
 		}
-		// SELECT first to avoid unnecessary writes
-		var existing string
-		selectErr := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, item.UserID).Scan(&existing)
-		if selectErr == nil {
-			userMap[item.UserID] = existing
-			continue
-		}
-		if !errors.Is(selectErr, pgx.ErrNoRows) {
-			log.Printf("user lookup error ext=%s err=%v", item.UserID, selectErr)
-			continue
-		}
-		// Insert; if race duplicates, fallback to select again
-		var insertedID string
-		insErr := database.Pool.QueryRow(ctx, `INSERT INTO users (email) VALUES ($1) RETURNING id`, item.UserID).Scan(&insertedID)
-		if insErr != nil {
-			var pgErr *pgconn.PgError
-			if errors.As(insErr, &pgErr) && pgErr.Code == "23505" {
-				if err2 := database.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email=$1`, item.UserID).Scan(&insertedID); err2 != nil {
-					log.Printf("user resolve race select failed ext=%s err=%v", item.UserID, err2)
-					continue
-				}
-			} else {
-				log.Printf("user insert unexpected error ext=%s err=%v", item.UserID, insErr)
-				continue
-			}
-		}
-		userMap[item.UserID] = insertedID
+		return id, true
 	}
 
 	upserted := 0
@@ -103,7 +89,7 @@ func PostSync(c *fiber.Ctx) error {
 
 	for _, item := range req.Items {
 		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
-		userUUID, ok := userMap[item.UserID]; if !ok { continue }
+		userUUID, ok := resolveUser(item.UserID); if !ok { continue }
 		var tsPtr *time.Time
 		if item.TS != nil && *item.TS != "" { if t, err := time.Parse(time.RFC3339, *item.TS); err == nil { tsPtr = &t } }
 		var mediaID string
