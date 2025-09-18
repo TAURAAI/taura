@@ -1,22 +1,21 @@
 package handlers
 
 import (
-	"context"
-	"fmt"
-	"github.com/TAURAAI/taura/api-gateway/internal/db"
-	"github.com/TAURAAI/taura/api-gateway/internal/embed"
-	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
-	"github.com/jackc/pgconn"
-	"io/ioutil"
-	"log"
-	"strings"
-	"time"
+  "context"
+  "fmt"
+  "github.com/TAURAAI/taura/api-gateway/internal/db"
+  "github.com/TAURAAI/taura/api-gateway/internal/embed"
+  "github.com/gofiber/fiber/v2"
+  "github.com/google/uuid"
+  "io/ioutil"
+  "log"
+  "strings"
+  "time"
 )
 
-// NOTE: We use a savepoint per item so a single bad record does not poison the whole transaction.
-// Always rollback to the item's savepoint on ANY error that could set the tx in failed state
-// before attempting further statements. Otherwise PostgreSQL returns 25P02 and ignores subsequent commands.
+// Simplified: no large enclosing transaction. Each item upserts independently so a single failure
+// does not trigger 25P02 cascading aborted transaction errors. This trades atomic multi-item ingest
+// for robustness and clearer logs.
 
 type MediaUpsert struct {
 	UserID   string   `json:"user_id"`
@@ -63,12 +62,6 @@ func PostSync(c *fiber.Ctx) error {
 		userMap[item.UserID] = resolved
 	}
 	ctx := context.Background()
-	tx, err := database.Pool.Begin(ctx)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "tx begin")
-	}
-	defer tx.Rollback(ctx)
-
 	upserted := 0
 	type pendingImage struct {
 		mediaID string
@@ -76,68 +69,45 @@ func PostSync(c *fiber.Ctx) error {
 		bytes   []byte
 	}
 	var pending []pendingImage
-	for idx, item := range req.Items {
-		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
-		userUUID, ok := userMap[item.UserID]
-		if !ok { // unresolved email earlier
-			continue
-		}
-		spName := fmt.Sprintf("sp_%d", idx)
-		if _, err := tx.Exec(ctx, "SAVEPOINT "+spName); err != nil {
-			log.Printf("savepoint create failed idx=%d err=%v", idx, err)
-			// if savepoint creation itself fails with 25P02, break to avoid log spam
-			break
-		}
+	for _, item := range req.Items {
+    if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
+    userUUID, ok := userMap[item.UserID]; if !ok { continue }
 
-		var tsPtr *time.Time
-		if item.TS != nil && *item.TS != "" {
-			if t, err := time.Parse(time.RFC3339, *item.TS); err == nil {
-				tsPtr = &t
-			}
-		}
+    var tsPtr *time.Time
+    if item.TS != nil && *item.TS != "" {
+      if t, err := time.Parse(time.RFC3339, *item.TS); err == nil { tsPtr = &t }
+    }
 
-		var mediaID string
-		insertMedia := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
-					VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-					ON CONFLICT (user_id, uri) DO NOTHING
-					RETURNING id`
-		errIns := tx.QueryRow(ctx, insertMedia, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID)
-		if errIns != nil {
-			// No row returned likely due to ON CONFLICT DO NOTHING; attempt select outside rollback path first
-			if pgErr, ok := errIns.(*pgconn.PgError); ok {
-				log.Printf("media insert pg error uri=%s code=%s msg=%s", item.URI, pgErr.Code, pgErr.Message)
-				if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName); rbErr != nil {
-					log.Printf("rollback to savepoint failed idx=%d err=%v", idx, rbErr)
-					continue
-				}
-				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
-				if errSel := row.Scan(&mediaID); errSel != nil { continue }
-			} else {
-				// Non-pg error (e.g. no rows) treat as existing row path
-				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
-				if errSel := row.Scan(&mediaID); errSel != nil { continue }
-			}
-		} else { upserted++ }
+    // Perform upsert in two steps: try insert RETURNING id; if no row (ON CONFLICT) select id.
+    var mediaID string
+    insertStmt := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+                   ON CONFLICT (user_id, uri) DO NOTHING
+                   RETURNING id`
+    if err := database.Pool.QueryRow(ctx, insertStmt, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID); err != nil {
+      // Assume conflict/no row; fetch existing
+      if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI).Scan(&mediaID); selErr != nil {
+        log.Printf("media upsert failed uri=%s err=%v", item.URI, selErr)
+        continue
+      }
+    } else {
+      upserted++
+    }
 
-		lowerMod := strings.ToLower(item.Modality)
-		if lowerMod == "image" || lowerMod == "pdf_page" {
-			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
-				bytes, readErr := ioutil.ReadFile(item.URI)
-				if readErr != nil {
-					log.Printf("read file for embed failed uri=%s err=%v", item.URI, readErr)
-				} else if len(bytes) == 0 {
-					log.Printf("skip embed for empty file uri=%s", item.URI)
-				} else {
-					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
-				}
-			}
-		}
-
-		// Release savepoint (no explicit RELEASE needed; move on)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "tx commit")
-	}
+    lower := strings.ToLower(item.Modality)
+    if lower == "image" || lower == "pdf_page" {
+      if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
+        bytes, readErr := ioutil.ReadFile(item.URI)
+        if readErr != nil {
+          log.Printf("read file for embed failed uri=%s err=%v", item.URI, readErr)
+        } else if len(bytes) == 0 {
+          log.Printf("skip embed for empty file uri=%s", item.URI)
+        } else {
+          pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
+        }
+      }
+    }
+  }
 
 	// Batch embed after commit to reduce DB lock time
 	const chunk = 16
