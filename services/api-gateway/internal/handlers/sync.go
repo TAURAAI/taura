@@ -42,6 +42,26 @@ func PostSync(c *fiber.Ctx) error {
 	if !ok || database == nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
 	}
+
+	// --- Pre-resolve any non-UUID user identifiers (treated as email) outside the media transaction ---
+	userMap := make(map[string]string) // external -> uuid
+	for _, item := range req.Items {
+		if item.UserID == "" { continue }
+		if _, ok := userMap[item.UserID]; ok { continue }
+		if _, err := uuid.Parse(item.UserID); err == nil {
+			userMap[item.UserID] = item.UserID
+			continue
+		}
+		// Resolve via upsert outside big media tx to isolate errors
+		var resolved string
+		uq := `INSERT INTO users (email) VALUES ($1)
+				ON CONFLICT (email) DO UPDATE SET email=EXCLUDED.email RETURNING id`
+		if err := database.Pool.QueryRow(context.Background(), uq, item.UserID).Scan(&resolved); err != nil {
+			log.Printf("user pre-resolve failed ext=%s err=%v", item.UserID, err)
+			continue // leave unresolved; item will be skipped later
+		}
+		userMap[item.UserID] = resolved
+	}
 	ctx := context.Background()
 	tx, err := database.Pool.Begin(ctx)
 	if err != nil {
@@ -57,27 +77,16 @@ func PostSync(c *fiber.Ctx) error {
 	}
 	var pending []pendingImage
 	for idx, item := range req.Items {
-		if item.UserID == "" || item.URI == "" || item.Modality == "" {
+		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
+		userUUID, ok := userMap[item.UserID]
+		if !ok { // unresolved email earlier
 			continue
 		}
-
 		spName := fmt.Sprintf("sp_%d", idx)
 		if _, err := tx.Exec(ctx, "SAVEPOINT "+spName); err != nil {
 			log.Printf("savepoint create failed idx=%d err=%v", idx, err)
-			continue
-		}
-
-		userUUID := item.UserID
-		if _, err := uuid.Parse(item.UserID); err != nil {
-			var resolved string
-			uq := `INSERT INTO users (email) VALUES ($1)
-						 ON CONFLICT (email) DO UPDATE SET email=EXCLUDED.email RETURNING id`
-			if err2 := tx.QueryRow(ctx, uq, item.UserID).Scan(&resolved); err2 != nil {
-				log.Printf("user resolve error ext=%s err=%v", item.UserID, err2)
-				tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName)
-				continue
-			}
-			userUUID = resolved
+			// if savepoint creation itself fails with 25P02, break to avoid log spam
+			break
 		}
 
 		var tsPtr *time.Time
@@ -94,28 +103,21 @@ func PostSync(c *fiber.Ctx) error {
 					RETURNING id`
 		errIns := tx.QueryRow(ctx, insertMedia, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID)
 		if errIns != nil {
-			// Expected conflict path: ErrNoRows (no RETURNING row) -> fetch existing id.
-			// Any other error would have put tx into error state; rollback to savepoint first.
-			rollbackNeeded := true
+			// No row returned likely due to ON CONFLICT DO NOTHING; attempt select outside rollback path first
 			if pgErr, ok := errIns.(*pgconn.PgError); ok {
-				// ErrNoRows is not a PgError; so any PgError triggers rollback.
 				log.Printf("media insert pg error uri=%s code=%s msg=%s", item.URI, pgErr.Code, pgErr.Message)
-			}
-			if rollbackNeeded {
 				if _, rbErr := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT "+spName); rbErr != nil {
 					log.Printf("rollback to savepoint failed idx=%d err=%v", idx, rbErr)
 					continue
 				}
+				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
+				if errSel := row.Scan(&mediaID); errSel != nil { continue }
+			} else {
+				// Non-pg error (e.g. no rows) treat as existing row path
+				row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
+				if errSel := row.Scan(&mediaID); errSel != nil { continue }
 			}
-			// After rollback we are clean; attempt to select existing media id (if it was just a conflict or prior row exists)
-			row := tx.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2 LIMIT 1`, userUUID, item.URI)
-			if errSel := row.Scan(&mediaID); errSel != nil {
-				log.Printf("media select after rollback failed uri=%s err=%v", item.URI, errSel)
-				continue
-			}
-		} else {
-			upserted++ // newly inserted
-		}
+		} else { upserted++ }
 
 		lowerMod := strings.ToLower(item.Modality)
 		if lowerMod == "image" || lowerMod == "pdf_page" {
