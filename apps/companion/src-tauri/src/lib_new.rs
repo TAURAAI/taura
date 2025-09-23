@@ -1,8 +1,6 @@
+use tauri::Manager;
 use std::process::Command;
 use walkdir::WalkDir;
-
-#[cfg(not(target_os = "android"))]
-use tauri::Manager;
 
 #[cfg(not(target_os = "android"))]
 use tauri_plugin_global_shortcut;
@@ -151,30 +149,46 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, S
   Ok(v.get("upserted").and_then(|x| x.as_u64()).unwrap_or(0) as usize)
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
-  // Desktop window management functionality
-  if let Some(overlay_window) = app.get_webview_window("overlay") {
-    let is_visible = overlay_window.is_visible().map_err(|e| e.to_string())?;
-    if is_visible {
-      overlay_window.hide().map_err(|e| e.to_string())?;
-    } else {
-      overlay_window.show().map_err(|e| e.to_string())?;
-      overlay_window.set_focus().map_err(|e| e.to_string())?;
+  #[cfg(not(target_os = "android"))]
+  {
+    // Desktop window management functionality
+    if let Some(overlay_window) = app.get_webview_window("overlay") {
+      let is_visible = overlay_window.is_visible().map_err(|e| e.to_string())?;
+      if is_visible {
+        overlay_window.hide().map_err(|e| e.to_string())?;
+      } else {
+        overlay_window.show().map_err(|e| e.to_string())?;
+        overlay_window.set_focus().map_err(|e| e.to_string())?;
+      }
     }
   }
+  
+  #[cfg(target_os = "android")]
+  {
+    // No overlay functionality on Android
+  }
+  
   Ok(())
 }
 
-#[cfg(not(target_os = "android"))]
 #[tauri::command]
 async fn show_main_window(app: tauri::AppHandle) -> Result<(), String> {
-  // Desktop window management functionality
-  if let Some(main_window) = app.get_webview_window("main") {
-    main_window.show().map_err(|e| e.to_string())?;
-    main_window.set_focus().map_err(|e| e.to_string())?;
+  #[cfg(not(target_os = "android"))]
+  {
+    // Desktop window management functionality
+    if let Some(main_window) = app.get_webview_window("main") {
+      main_window.show().map_err(|e| e.to_string())?;
+      main_window.set_focus().map_err(|e| e.to_string())?;
+    }
   }
+  
+  #[cfg(target_os = "android")]
+  {
+    // No window management needed on Android
+  }
+  
   Ok(())
 }
 
@@ -209,32 +223,16 @@ async fn open_file(path: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let mut builder = tauri::Builder::default();
-  
-  // Register commands conditionally based on platform
-  #[cfg(target_os = "android")]
-  {
-    builder = builder.invoke_handler(tauri::generate_handler![
+  let mut builder = tauri::Builder::default()
+    .invoke_handler(tauri::generate_handler![
       get_default_folder, 
       pick_folder, 
       scan_folder, 
       sync_index, 
+      toggle_overlay, 
+      show_main_window, 
       open_file
     ]);
-  }
-  
-  #[cfg(not(target_os = "android"))]
-  {
-    builder = builder.invoke_handler(tauri::generate_handler![
-      get_default_folder, 
-      pick_folder, 
-      scan_folder, 
-      sync_index, 
-      open_file,
-      toggle_overlay,
-      show_main_window
-    ]);
-  }
 
   // Add global shortcut plugin only on desktop
   #[cfg(not(target_os = "android"))]

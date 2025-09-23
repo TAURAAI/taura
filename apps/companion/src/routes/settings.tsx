@@ -119,6 +119,12 @@ function SettingsApp() {
   }
 
   async function handleShowOverlay() {
+    // Check if we're on mobile/Android - if so, don't show overlay
+    if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
+      console.log('Overlay not available on mobile platforms')
+      return
+    }
+    
     try {
       await invoke('toggle_overlay')
     } catch (e) {
@@ -178,11 +184,14 @@ function SettingsApp() {
               </div>
             )}
           </div>
-          <div className="glass-card p-6 flex flex-col gap-4">
-            <h2 className="text-base font-semibold text-white">Overlay Control</h2>
-            <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
-            <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
-          </div>
+          {/* Only show overlay control on desktop */}
+          {!(navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) && (
+            <div className="glass-card p-6 flex flex-col gap-4">
+              <h2 className="text-base font-semibold text-white">Overlay Control</h2>
+              <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
+              <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
+            </div>
+          )}
           <div className="glass-card p-6 flex flex-col gap-4 md:col-span-2">
             <h2 className="text-base font-semibold text-white">Advanced</h2>
             <div className="grid md:grid-cols-3 gap-4 text-xs">

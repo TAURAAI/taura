@@ -41,6 +41,12 @@ function HomeScreen() {
   }
 
   async function handleQuickOverlay() {
+    // Check if we're on mobile/Android - if so, don't show overlay
+    if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
+      console.log('Overlay not available on mobile platforms')
+      return
+    }
+    
     try {
       await invoke('toggle_overlay')
     } catch (e) {
@@ -94,11 +100,14 @@ function HomeScreen() {
           </div>
         </div>
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          <div className="glass-card p-6 flex flex-col">
-            <h2 className="text-lg font-medium mb-2 text-white">Search Overlay</h2>
-            <p className="text-sm text-white/50 mb-4">Launch the universal search palette anywhere.</p>
-            <button onClick={handleQuickOverlay} className="btn-primary w-fit">Open Overlay</button>
-          </div>
+          {/* Only show overlay card on desktop */}
+          {!(navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) && (
+            <div className="glass-card p-6 flex flex-col">
+              <h2 className="text-lg font-medium mb-2 text-white">Search Overlay</h2>
+              <p className="text-sm text-white/50 mb-4">Launch the universal search palette anywhere.</p>
+              <button onClick={handleQuickOverlay} className="btn-primary w-fit">Open Overlay</button>
+            </div>
+          )}
           <div className="glass-card p-6 flex flex-col">
             <h2 className="text-lg font-medium mb-2 text-white">Index Settings</h2>
             <p className="text-sm text-white/50 mb-4">Configure folders, filters and privacy options.</p>

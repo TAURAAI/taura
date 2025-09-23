@@ -25,6 +25,11 @@ declare module '@tanstack/react-router' {
 
 async function getInitialRoute() {
   try {
+    // Check if we're on Android/mobile - if so, always go to main dashboard
+    if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
+      return '/'
+    }
+    
     const currentWindow = getCurrentWebviewWindow()
     const windowLabel = currentWindow.label
     

@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Taura</string>
+    <string name="main_activity_title">Taura</string>
+    <string name="taura_keyboard_name">Taura AI Keyboard</string>
+    <string name="keyboard_description">AI-powered keyboard with smart suggestions</string>
+    <string name="space">Space</string>
+    <string name="enter">Enter</string>
+    <string name="backspace">Backspace</string>
+    <string name="done">Done</string>
+    <string name="ai_assist">AI Assist</string>
+</resources>

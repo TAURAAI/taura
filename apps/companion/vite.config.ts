@@ -21,4 +21,8 @@ export default defineConfig({
       '@': resolve(__dirname, './src'),
     },
   },
+  server: {
+    host: '0.0.0.0', // 👈 this makes it reachable from your phone
+    port: 3000,
+  },
 })
