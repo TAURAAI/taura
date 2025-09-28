@@ -6,6 +6,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { routeTree } from './routeTree.gen'
 
 import './styles.css'
+import { initIndexer } from './indexer'
 import reportWebVitals from './reportWebVitals.ts'
 
 const router = createRouter({
@@ -41,6 +42,8 @@ async function getInitialRoute() {
 
 async function initApp() {
   const initialRoute = await getInitialRoute()
+  // fire-and-forget indexer initialization
+  initIndexer().catch(err => console.warn('indexer init failed', err))
   
   await router.navigate({ to: initialRoute })
 

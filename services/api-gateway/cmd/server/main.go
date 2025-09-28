@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
   "log"
   "os"
   "context"
@@ -12,6 +13,8 @@ import (
   "github.com/joho/godotenv"
   "github.com/TAURAAI/taura/api-gateway/internal/handlers"
   "github.com/TAURAAI/taura/api-gateway/internal/db"
+	"net/http"
+	"time"
 )
 
 func loadRootEnv() {
@@ -61,6 +64,22 @@ func main() {
 	app.Options("/search", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	app.Post("/search", handlers.PostSearch)
 	app.Post("/sync", handlers.PostSync)
+	app.Get("/stats", handlers.GetStats)
+
+	// trigger embedder warmup asynchronously (non-blocking)
+	go func() {
+		warmURL := os.Getenv("EMBEDDER_URL")
+		if warmURL == "" { warmURL = "http://localhost:9000" }
+		client := &http.Client{ Timeout: 20 * time.Second }
+		start := time.Now()
+		resp, err := client.Post(warmURL+"/warmup", "application/json", bytes.NewReader([]byte("{}")))
+		if err != nil {
+			log.Printf("embedder warmup request failed err=%v", err)
+			return
+		}
+		resp.Body.Close()
+		log.Printf("embedder warmup triggered elapsed=%dms", time.Since(start).Milliseconds())
+	}()
 
 	port := os.Getenv("PORT")
 	if port == "" { port = "8080" }
