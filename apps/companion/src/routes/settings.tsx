@@ -52,9 +52,76 @@ function SettingsApp() {
     }
   }
 
-  // manual scan/index removed; automatic background system handles enumeration + syncing
+  async function handleScanFolder() {
+    if (!selectedFolder) return
+    
+    setIsScanning(true)
+    try {
+      const result = await invoke<ScanResponse>('scan_folder', {
+        path: selectedFolder,
+        maxSamples: 1000,
+      })
+      setScanResults(result)
+    } catch (e) {
+      console.error('Scan failed:', e)
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
+  async function handleStartIndexing() {
+    if (!scanResults) return
+
+    setIsIndexing(true)
+    setIndexProgress(0)
+
+    try {
+      const chunkSize = 50
+      const chunks = []
+      for (let i = 0; i < scanResults.items.length; i += chunkSize) {
+        chunks.push(scanResults.items.slice(i, i + chunkSize))
+      }
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]
+        try {
+          const payload = {
+            items: chunk.map((item) => ({
+              user_id: 'user',
+              modality: item.modality,
+              uri: item.path,
+              ts: item.modified,
+              lat: item.lat,
+              lon: item.lon,
+              timestamp: item.timestamp,
+            })),
+          }
+          
+          await invoke<number>('sync_index', {
+            serverUrl: 'http://localhost:8080',
+            payload,
+          })
+          
+          setIndexProgress(((i + 1) / chunks.length) * 100)
+        } catch (e) {
+          console.warn('Failed to sync chunk:', e)
+        }
+      }
+    } catch (e) {
+      console.error('Indexing failed:', e)
+    } finally {
+      setIsIndexing(false)
+      setIndexProgress(0)
+    }
+  }
 
   async function handleShowOverlay() {
+    // Check if we're on mobile/Android - if so, don't show overlay
+    if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
+      console.log('Overlay not available on mobile platforms')
+      return
+    }
+    
     try {
       await invoke('toggle_overlay')
     } catch (e) {
@@ -155,12 +222,14 @@ function SettingsApp() {
             </div>
             {idx.error && <div className="text-xs text-red-400">Error: {idx.error}</div>}
           </div>
-          {/* Legacy manual indexing card removed in favor of autonomous system */}
-          <div className="glass-card p-6 flex flex-col gap-4">
-            <h2 className="text-base font-semibold text-white">Overlay Control</h2>
-            <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
-            <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
-          </div>
+          {/* Only show overlay control on desktop */}
+          {!(navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) && (
+            <div className="glass-card p-6 flex flex-col gap-4">
+              <h2 className="text-base font-semibold text-white">Overlay Control</h2>
+              <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
+              <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
+            </div>
+          )}
           <div className="glass-card p-6 flex flex-col gap-4 md:col-span-2">
             <h2 className="text-base font-semibold text-white">Advanced</h2>
             <div className="grid md:grid-cols-3 gap-4 text-xs">

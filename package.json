@@ -9,7 +9,7 @@
     "dev:companion": "pnpm --filter companion dev",
     "dev:companion:vite": "pnpm --filter companion dev:vite",
     "dev:api-gateway": "cd services/api-gateway && go run cmd/server/main.go",
-    "dev:embedder": "cd services/embedder && python -m uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload",
+    "dev:embedder": "cd services/embedder && source .venv/bin/activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 9000 --reload",
     "dev:infra": "cd infra && docker compose up -d",
     "dev:setup": "pnpm run dev:infra && timeout /t 10 /nobreak",
     "build:companion": "pnpm --filter companion build",

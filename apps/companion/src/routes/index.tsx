@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link, useRouterState } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AppShell } from '../components/AppShell'
@@ -93,6 +93,23 @@ function HomeScreen() {
     }
   }
 
+  async function handleQuickOverlay() {
+    // Check if we're on mobile/Android - if so, don't show overlay
+    if (navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) {
+      console.log('Overlay not available on mobile platforms')
+      return
+    }
+    
+    try {
+      await invoke('toggle_overlay')
+    } catch (e) {
+      console.error('Failed to toggle overlay:', e)
+    }
+  }
+
+  const location = useRouterState({ select: s => s.location.pathname })
+  const navClass = (path: string) => `nav-item ${location === path ? 'active' : ''}`
+
   return (
     <AppShell>
       <div className="home-hero">
@@ -140,25 +157,19 @@ function HomeScreen() {
             </div>
           </div>
         </div>
-      </div>
-
-      <div className="home-grid">
-        <section className="home-left">
-          <div className="section-heading">
-            <h2>Quick actions</h2>
-            <p>Stay in flow with one-tap commands.</p>
-          </div>
-          <div className="action-stack">
-            {quickActions.map((action) => (
-              <button key={action.title} className="action-card" onClick={action.action}>
-                <span className="action-icon">{action.icon}</span>
-                <span className="action-body">
-                  <span className="action-title">{action.title}</span>
-                  <span className="action-subtitle">{action.description}</span>
-                </span>
-                <span className="action-cta">{action.cta}</span>
-              </button>
-            ))}
+        <div className="grid md:grid-cols-2 gap-6 mb-10">
+          {/* Only show overlay card on desktop */}
+          {!(navigator.userAgent.includes('Mobile') || navigator.userAgent.includes('Android')) && (
+            <div className="glass-card p-6 flex flex-col">
+              <h2 className="text-lg font-medium mb-2 text-white">Search Overlay</h2>
+              <p className="text-sm text-white/50 mb-4">Launch the universal search palette anywhere.</p>
+              <button onClick={handleQuickOverlay} className="btn-primary w-fit">Open Overlay</button>
+            </div>
+          )}
+          <div className="glass-card p-6 flex flex-col">
+            <h2 className="text-lg font-medium mb-2 text-white">Index Settings</h2>
+            <p className="text-sm text-white/50 mb-4">Configure folders, filters and privacy options.</p>
+            <Link to="/settings" className="btn-outline w-fit">Open Settings</Link>
           </div>
 
           <div className="section-heading mt-10">
@@ -166,7 +177,6 @@ function HomeScreen() {
             <p>Your latest matches across photos and docs.</p>
           </div>
           <RecentItems />
-        </section>
 
         <section className="home-right">
           <div className="section-heading">
@@ -175,6 +185,7 @@ function HomeScreen() {
           </div>
           <QuickSearch userId={config.userId} />
         </section>
+      </div>
       </div>
     </AppShell>
   )

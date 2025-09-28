@@ -6,3 +6,4 @@ open-clip-torch
 Pillow
 python-multipart
 pydantic
+transformers

@@ -46,6 +46,8 @@ pnpm run dev:infra         # Docker containers
 #### Python Dependencies
 ```bash
 cd services/embedder
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
