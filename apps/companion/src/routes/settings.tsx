@@ -12,12 +12,10 @@ export const Route = createFileRoute('/settings')({
 
 function SettingsApp() {
   const [, forceRerender] = useState(0)
-  // legacy manual scanning/indexing states removed (automatic system in indexer.ts)
   const config = useAppConfig()
   const [configDraft, setConfigDraft] = useState({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
 
   useEffect(() => {
-    // Load default folder on startup
     void (async () => {
       try {
         const defaultPath = await invoke<string | null>('get_default_folder')
