@@ -138,6 +138,11 @@ export async function setRootPath(p: string) {
   if (scanning) {
     pendingRoot = p
     indexerStore.patch({ pendingRoot: p })
+    try {
+      localStorage.setItem('taura.root', p)
+    } catch (e) {
+      console.warn('failed to persist pending root to localStorage', e)
+    }
     try { await invoke('stop_scan') } catch {}
     return
   }
