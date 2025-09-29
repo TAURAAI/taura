@@ -7,13 +7,26 @@ import (
 	"github.com/TAURAAI/taura/api-gateway/internal/embed"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"log"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
+)
+
+const (
+	// The media_vecs index is created with WITH (lists = 100), so cap probes at this value
+	ivfFlatLists = 100
+)
+
+var (
+	probeConfigOnce  sync.Once
+	configuredProbes int
 )
 
 type SearchRequest struct {
@@ -38,6 +51,28 @@ type SearchResult struct {
 
 type SearchResponse struct {
 	Results []SearchResult `json:"results"`
+}
+
+func configuredIVFFlatProbes() int {
+	probeConfigOnce.Do(func() {
+		defaultProbes := ivfFlatLists
+		probesEnv := strings.TrimSpace(os.Getenv("SEARCH_IVFFLAT_PROBES"))
+		configured := defaultProbes
+		if probesEnv != "" {
+			if parsed, err := strconv.Atoi(probesEnv); err != nil || parsed <= 0 {
+				log.Printf("[SEARCH] Invalid SEARCH_IVFFLAT_PROBES='%s', defaulting to %d", probesEnv, defaultProbes)
+			} else {
+				configured = parsed
+			}
+		}
+		if configured > ivfFlatLists {
+			log.Printf("[SEARCH] SEARCH_IVFFLAT_PROBES=%d exceeds lists=%d, capping", configured, ivfFlatLists)
+			configured = ivfFlatLists
+		}
+		configuredProbes = configured
+		log.Printf("[SEARCH] IVFFLAT probes configured - probes=%d", configuredProbes)
+	})
+	return configuredProbes
 }
 
 func PostSearch(c *fiber.Ctx) error {
@@ -258,13 +293,41 @@ func PostSearch(c *fiber.Ctx) error {
 		ORDER BY v.embedding <=> $1::vector ASC
 		LIMIT $%d`, clause.String(), limitIdx)
 
-	log.Printf("[SEARCH] Executing vector search - user=%s, ann_limit=%d, filters_applied=%d", userID, annLimit, filtersApplied)
+	probes := configuredIVFFlatProbes()
+
+	conn, err := database.Pool.Acquire(ctx)
+	if err != nil {
+		log.Printf("[SEARCH] Failed to acquire DB connection: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "db connection error")
+	}
+	defer conn.Release()
+
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		log.Printf("[SEARCH] Failed to begin transaction: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "db transaction error")
+	}
+	defer func() {
+		if tx != nil {
+			if err := tx.Rollback(ctx); err != nil && err != pgx.ErrTxClosed {
+				log.Printf("[SEARCH] Transaction rollback error: %v", err)
+			}
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, "SET LOCAL ivfflat.probes = $1", probes); err != nil {
+		log.Printf("[SEARCH] Failed to set ivfflat probes=%d: %v", probes, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "query error")
+	}
+
+	log.Printf("[SEARCH] Executing vector search - user=%s, ann_limit=%d, filters_applied=%d, probes=%d", userID, annLimit, filtersApplied, probes)
 	queryStart := time.Now()
-	rows, err := database.Pool.Query(ctx, sql, params...)
+	rows, err := tx.Query(ctx, sql, params...)
 	if err != nil {
 		log.Printf("[SEARCH] Vector search query failed - error=%v, elapsed=%dms", err, time.Since(queryStart).Milliseconds())
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
 	}
+
 	defer rows.Close()
 
 	results := make([]SearchResult, 0, annLimit)
@@ -282,8 +345,18 @@ func PostSearch(c *fiber.Ctx) error {
 		results = append(results, r)
 		resultCount++
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[SEARCH] Row iteration error: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "query error")
+	}
 	queryDur := time.Since(queryStart)
 	log.Printf("[SEARCH] Vector search completed - results=%d, best_score=%.4f, elapsed=%dms", resultCount, bestScore, queryDur.Milliseconds())
+
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("[SEARCH] Transaction commit error: %v", err)
+		return fiber.NewError(fiber.StatusInternalServerError, "db transaction error")
+	}
+	tx = nil
 
 	// Reranking with logging
 	keywords := tokenizeQuery(req.Text)
