@@ -302,7 +302,7 @@ func PostSearch(c *fiber.Ctx) error {
 	}
 	defer conn.Release()
 
-	tx, err := conn.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		log.Printf("[SEARCH] Failed to begin transaction: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "db transaction error")
@@ -328,6 +328,8 @@ func PostSearch(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
 	}
 
+	defer rows.Close()
+
 	results := make([]SearchResult, 0, annLimit)
 	var bestScore float32
 	resultCount := 0
@@ -343,7 +345,6 @@ func PostSearch(c *fiber.Ctx) error {
 		results = append(results, r)
 		resultCount++
 	}
-	rows.Close()
 	if err := rows.Err(); err != nil {
 		log.Printf("[SEARCH] Row iteration error: %v", err)
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
