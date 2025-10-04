@@ -247,7 +247,8 @@ async function batchUpload(items: any[]) {
       }
       if (shouldInlineBytes && typeof m.path === 'string' && m.path && (m.modality === 'image' || m.modality === 'pdf_page')) {
         try {
-          const bytes = await readFile(m.path)
+          const raw = await readFile(m.path)
+          const bytes = raw instanceof Uint8Array ? raw : Uint8Array.from(raw as unknown as number[])
           if (bytes.length === 0) {
             localReadErrors.push({ uri: m.path, error: 'file empty' })
           } else if (bytes.length > MAX_INLINE_FILE_BYTES) {
