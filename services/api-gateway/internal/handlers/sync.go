@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/TAURAAI/taura/api-gateway/internal/db"
 	"github.com/TAURAAI/taura/api-gateway/internal/embed"
 	"github.com/gofiber/fiber/v2"
@@ -78,13 +77,10 @@ func PostSync(c *fiber.Ctx) error {
 	}
 
 	upserted := 0
-	type pendingImage struct {
-		mediaID string
-		uri     string
-		bytes   []byte
-	}
-	var pending []pendingImage
 	var readFailures []failureDetail
+	requestedEmbeds := 0
+	queuedEmbeds := 0
+	embedFailures := []failureDetail{}
 	// Single upsert statement always returning id + inserted flag.
 	mediaUpsertStmt := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -139,80 +135,35 @@ func PostSync(c *fiber.Ctx) error {
 				bytes, readErr := os.ReadFile(item.URI)
 				if readErr != nil {
 					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: readErr.Error()})
-				} else if len(bytes) > 0 {
-					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
-				} else {
+					continue
+				}
+				if len(bytes) == 0 {
 					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: "file empty"})
+					continue
+				}
+				requestedEmbeds++
+				if err := embed.EnqueueImage(mediaID, item.URI, bytes); err != nil {
+					embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: err.Error()})
+				} else {
+					queuedEmbeds++
 				}
 			}
 		}
 	}
 
-	// Batch embed after commit to reduce DB lock time
-	const chunk = 16
-	embedSuccess := 0
-	embedFailed := 0
-	var embedFailures []failureDetail
-	for i := 0; i < len(pending); i += chunk {
-		end := i + chunk
-		if end > len(pending) {
-			end = len(pending)
-		}
-		batch := pending[i:end]
-		batchBytes := 0
-		for _, p := range batch {
-			batchBytes += len(p.bytes)
-		}
-		startBatch := time.Now()
-		payload := make([][]byte, len(batch))
-		for j, p := range batch {
-			payload[j] = p.bytes
-		}
-		vecs, errs, errBatch := embed.ImageBatch(ctx, payload)
-		elapsed := time.Since(startBatch)
-		if errBatch != nil {
-			log.Printf("image batch embed error start=%d count=%d bytes=%d elapsed=%dms err=%v", i, len(batch), batchBytes, elapsed.Milliseconds(), errBatch)
-			for _, p := range batch {
-				embedFailed++
-				embedFailures = append(embedFailures, failureDetail{URI: p.uri, Error: errBatch.Error()})
-			}
-			continue
-		}
-		log.Printf("image batch embed ok start=%d count=%d bytes=%d elapsed=%dms", i, len(batch), batchBytes, elapsed.Milliseconds())
-		for j, vec := range vecs {
-			if len(vec) == 0 {
-				if errs != nil && errs[j] != "" {
-					log.Printf("embed image failed uri=%s err=%s", batch[j].uri, errs[j])
-					embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: errs[j]})
-				} else {
-					embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: "empty embedding"})
-				}
-				embedFailed++
-				continue
-			}
-			embedSuccess++
-			parts := make([]string, len(vec))
-			for k, f := range vec {
-				parts[k] = fmt.Sprintf("%.9f", f)
-			}
-			vectorLiteral := "[" + strings.Join(parts, ",") + "]"
-			if _, insErr := database.Pool.Exec(ctx, `INSERT INTO media_vecs (media_id, embedding) VALUES ($1, $2::vector)
-				ON CONFLICT (media_id) DO UPDATE SET embedding=EXCLUDED.embedding`, batch[j].mediaID, vectorLiteral); insErr != nil {
-				log.Printf("media_vecs upsert error media_id=%s err=%v", batch[j].mediaID, insErr)
-				embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: insErr.Error()})
-				embedFailed++
-				embedSuccess--
-			}
-		}
-	}
+	embedStatus := embed.HealthSnapshot()
+	queueDepth := embed.QueueDepth()
 
 	return c.JSON(fiber.Map{
-		"upserted":         upserted,
-		"embedded_images":  embedSuccess,
-		"embedded_success": embedSuccess,
-		"embedded_failed":  embedFailed,
-		"embed_errors":     embedFailures,
-		"read_errors":      readFailures,
-		"requested_embeds": len(pending),
+		"upserted":          upserted,
+		"embedded_images":   queuedEmbeds,
+		"embedded_success":  queuedEmbeds,
+		"embedded_failed":   requestedEmbeds - queuedEmbeds,
+		"embed_errors":      embedFailures,
+		"read_errors":       readFailures,
+		"requested_embeds":  requestedEmbeds,
+		"queued_embeds":     queuedEmbeds,
+		"embed_queue_depth": queueDepth,
+		"embedder_status":   embedStatus,
 	})
 }

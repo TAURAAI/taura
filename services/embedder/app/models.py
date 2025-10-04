@@ -445,7 +445,7 @@ def embed_image_bytes(image_bytes: bytes, *, with_diagnostics: bool = False) -> 
                 crop = (crop - norm_mean) / norm_std
                 if target_dtype is not torch.float32:
                     crop = crop.to(dtype=target_dtype)
-                crops.append(crop.squeeze(0).contiguous(memory_format=torch.channels_last))
+                crops.append(crop.squeeze(0).contiguous())
                 produced += 1
 
             logger.debug(

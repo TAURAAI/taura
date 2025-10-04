@@ -162,13 +162,16 @@ func Text(ctx context.Context, text string) ([]float32, error) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		noteFailure(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	var tr textRes
 	if err := decodeOrError(resp, &tr); err != nil {
+		noteFailure(err)
 		return nil, err
 	}
+	noteSuccess()
 	return tr.Vec, nil
 }
 
@@ -182,13 +185,16 @@ func TextBatch(ctx context.Context, texts []string) ([][]float32, error) {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		noteFailure(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	var br batchTextRes
 	if err := decodeOrError(resp, &br); err != nil {
+		noteFailure(err)
 		return nil, err
 	}
+	noteSuccess()
 	return br.Vecs, nil
 }
 
@@ -205,16 +211,20 @@ func Image(ctx context.Context, uriOrB64 string, isBase64 bool) ([]float32, erro
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
+		noteFailure(err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 	var ir imageRes
 	if err := decodeOrError(resp, &ir); err != nil {
+		noteFailure(err)
 		return nil, err
 	}
 	if err := validateVec(ir.Vec, ir.Diag); err != nil {
+		noteFailure(err)
 		return nil, err
 	}
+	noteSuccess()
 	return ir.Vec, nil
 }
 
@@ -319,5 +329,11 @@ func ImageBatch(ctx context.Context, imagesB64 [][]byte) ([][]float32, []string,
 			return nil, nil, fmt.Errorf("image batch failed after retries batch=%d", len(imgs))
 		}
 	}
-	return run(ctx, imagesB64, 0)
+	vecs, errs, err := run(ctx, imagesB64, 0)
+	if err != nil {
+		noteFailure(err)
+	} else {
+		noteSuccess()
+	}
+	return vecs, errs, err
 }
