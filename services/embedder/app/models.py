@@ -167,6 +167,17 @@ def load_model(device: str = None) -> None:
         tokenizer_name = getattr(tokenizer, "__class__", type("anon", (), {})).__name__
         logger.info("[MODEL_INIT] tokenizer=%s", tokenizer_name)
 
+        token_emb = getattr(model, "token_embedding", None)
+        if token_emb is None and hasattr(model, "text"):
+            token_emb = getattr(model.text, "token_embedding", None)
+
+        if tokenizer_name.lower().startswith("simple"):
+            raise RuntimeError(
+                "SigLIP models require the HuggingFace tokenizer (transformers + sentencepiece). "
+                "The runtime fell back to SimpleTokenizer. Install the 'transformers' and 'sentencepiece' "
+                "packages inside the embedder environment and restart the service."
+            )
+
         ctx_len = getattr(model, "context_length", 77)
         try:
             probe = tokenizer(["warmup"], context_length=ctx_len)  # type: ignore[arg-type]
@@ -180,7 +191,6 @@ def load_model(device: str = None) -> None:
                 raise RuntimeError(f"tokenizer produced negative index {min_probe}")
 
             vocab_size = None
-            token_emb = getattr(model, "token_embedding", None)
             if token_emb is not None:
                 if hasattr(token_emb, "num_embeddings"):
                     vocab_size = int(token_emb.num_embeddings)
