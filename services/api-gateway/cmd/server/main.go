@@ -79,6 +79,7 @@ func main() {
 	app.Post("/sync", handlers.PostSync)
 	app.Post("/sync/stream", handlers.PostSyncStream)
 	app.Get("/stats", handlers.GetStats)
+	app.Post("/users/upsert", handlers.PostUpsertUser)
 
 	// trigger embedder warmup asynchronously (non-blocking)
 	go func() {

@@ -4,6 +4,7 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import { routeTree } from './routeTree.gen'
+import { loadSession, getAuthState } from './state/auth'
 
 import './styles.css'
 import { initIndexer } from './indexer'
@@ -41,10 +42,14 @@ async function getInitialRoute() {
 }
 
 async function initApp() {
-  const initialRoute = await getInitialRoute()
-  // fire-and-forget indexer initialization
-  initIndexer().catch(err => console.warn('indexer init failed', err))
-  
+  await loadSession()
+  const auth = getAuthState()
+  const initialRoute = auth.session ? await getInitialRoute() : '/onboarding/welcome'
+  // fire-and-forget indexer initialization (only after auth)
+  if (auth.session) {
+    initIndexer().catch(err => console.warn('indexer init failed', err))
+  }
+
   await router.navigate({ to: initialRoute })
 
   const rootElement = document.getElementById('app')

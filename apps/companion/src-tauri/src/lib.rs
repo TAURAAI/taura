@@ -6,6 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 use tokio::time::sleep; // for throttled scan yielding
 
+mod oauth;
+use oauth::{get_session, google_auth_start, logout};
+
 // Cancellation + config state
 static CANCEL_SCAN: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 static DEFAULT_THROTTLE_VALUE: Lazy<std::sync::Mutex<u64>> =
@@ -417,7 +420,10 @@ pub fn run() {
             show_overlay,
             toggle_overlay,
             show_main_window,
-            open_file
+            open_file,
+            google_auth_start,
+            get_session,
+            logout
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {
