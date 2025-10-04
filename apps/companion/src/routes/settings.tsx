@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { indexerStore, setRootPath, startFullScan, stopScan } from '../indexer'
 import { AppShell } from '../components/AppShell'
 import { useAppConfig, updateConfig } from '../state/config'
+import { useAuth } from '../state/auth'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsApp,
@@ -21,9 +22,10 @@ function useIndexerState() {
 function SettingsApp() {
   const idx = useIndexerState()
   const config = useAppConfig()
+  const auth = useAuth()
   const [configDraft, setConfigDraft] = useState<{ serverUrl: string; userId: string; privacyMode: PrivacyMode }>({
     serverUrl: config.serverUrl,
-    userId: config.userId,
+    userId: (config.userId || auth.session?.sub || auth.session?.email || ""),
     privacyMode: (config.privacyMode as PrivacyMode) ?? 'hybrid',
   })
 
@@ -50,7 +52,7 @@ function SettingsApp() {
   useEffect(() => {
     setConfigDraft({
       serverUrl: config.serverUrl,
-      userId: config.userId,
+      userId: (config.userId || auth.session?.sub || auth.session?.email || ""),
       privacyMode: (config.privacyMode as PrivacyMode) ?? 'hybrid',
     })
   }, [config.serverUrl, config.userId, config.privacyMode])
@@ -288,6 +290,9 @@ function SettingsApp() {
           <div className="mb-4">
             <h2 className="text-base font-semibold text-white">Server & privacy</h2>
             <p className="text-xs text-slate-400">Adjust connection settings and scan pacing.</p>
+            {auth.session?.email && (
+              <p className="mt-2 text-xs text-indigo-200">Signed in as <span className="font-medium text-white">{auth.session.email}</span></p>
+            )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">

@@ -32,13 +32,16 @@ export function subscribeAuth(cb: () => void) { listeners.add(cb); return () => 
 export function getAuthState() { return state }
 export function useAuth() { return useSyncExternalStore(subscribeAuth, getAuthState) }
 
-export async function loadSession() {
+export async function loadSession(): Promise<Session | null> {
   try {
     const sess = await invoke<Session | null>('get_session')
     setState({ session: sess, loading: false, error: null })
+    syncConfigWithSession(sess)
     if (sess) scheduleRefresh(sess)
+    return sess
   } catch (e: any) {
     setState({ session: null, loading: false, error: String(e) })
+    return null
   }
 }
 
@@ -52,6 +55,7 @@ export async function loginWithGoogle(clientId: string) {
     if (secret) cfg.clientSecret = secret
     const res = await invoke<{ session: Session }>('google_auth_start', { cfg })
     setState({ session: res.session, loading: false })
+    syncConfigWithSession(res.session)
   scheduleRefresh(res.session)
     // Integrated auth flow: send id_token to gateway for verify+upsert
     try {
@@ -83,6 +87,7 @@ export async function loginWithGoogle(clientId: string) {
 export async function logout() {
   try { await invoke('logout'); } catch {}
   setState({ session: null })
+  updateConfig({ userId: '' })
   clearRefreshTimer()
 }
 
@@ -119,6 +124,7 @@ export async function manualRefresh() {
   try {
     const updated = await invoke<Session>('refresh_session')
     setState({ session: updated })
+    syncConfigWithSession(updated)
     scheduleRefresh(updated)
     return updated
   } catch (e) {
@@ -129,3 +135,12 @@ export async function manualRefresh() {
 
 // Auto-load session when imported (main.tsx will await loadSession before routing)
 // (main will explicitly call loadSession to control timing)
+
+function syncConfigWithSession(sess: Session | null) {
+  if (!sess) return
+  const current = getConfig()
+  const candidate = sess.sub || sess.email
+  if (candidate && current.userId !== candidate) {
+    updateConfig({ userId: candidate })
+  }
+}

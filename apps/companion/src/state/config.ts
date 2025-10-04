@@ -12,7 +12,7 @@ const STORAGE_KEY = 'taura.config.v1'
 
 const DEFAULT_CONFIG: AppConfig = {
   serverUrl: 'https://unipool.acm.today',
-  userId: 'user',
+  userId: '',
   privacyMode: 'hybrid',
 }
 
@@ -35,12 +35,16 @@ function loadFromStorage(): AppConfig {
 }
 
 function sanitizeConfig(value: Partial<AppConfig>): AppConfig {
-  const serverUrl = (value.serverUrl || DEFAULT_CONFIG.serverUrl).trim()
-  const userId = (value.userId || DEFAULT_CONFIG.userId).trim() || DEFAULT_CONFIG.userId
+  const serverRaw = typeof value.serverUrl === 'string' && value.serverUrl.trim()
+    ? value.serverUrl.trim()
+    : DEFAULT_CONFIG.serverUrl
+  const userRaw = typeof value.userId === 'string' && value.userId.trim()
+    ? value.userId.trim()
+    : DEFAULT_CONFIG.userId
   const privacyMode = value.privacyMode === 'strict-local' ? 'strict-local' : 'hybrid'
   return {
-    serverUrl: serverUrl.replace(/\/$/, ''),
-    userId,
+    serverUrl: serverRaw.replace(/\/$/, ''),
+    userId: userRaw,
     privacyMode,
   }
 }
