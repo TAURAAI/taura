@@ -90,9 +90,48 @@ window.__TAURA_INDEXER = indexerStore
 // ---- Config ----
 const SCAN_INTERVAL_MIN = Number(localStorage.getItem('taura.scan.interval.min') || '30') // minutes
 const DEFAULT_THROTTLE_MS = 40 // built-in gentle default
-const BATCH_SIZE = 96
 const MAX_INLINE_FILE_BYTES = 8 * 1024 * 1024 // 8MB safety to avoid ballooning JSON
+const STREAM_CHUNK_SIZE = 8
+const STREAM_REQUEUE_LIMIT = 2
+const STREAM_RETRY_DELAY_MS = 1200
 const RESCAN_ON_START = true
+
+type UploadPayloadItem = {
+  user_id: string
+  modality: string
+  uri: string
+  ts?: string
+  lat?: number | null
+  lon?: number | null
+  bytes_b64?: string
+}
+
+type UploadAggregate = {
+  upserted: number
+  requested: number
+  embeddedSuccess: number
+  embeddedFailed: number
+  embedErrors: SyncErrorItem[]
+  readErrors: SyncErrorItem[]
+}
+
+const uploadQueue: any[] = []
+let uploadWorkerActive = false
+let totalPlanned = 0
+let sentCount = 0
+let processedBatches = 0
+let aggregateTotals: UploadAggregate = resetAggregate()
+
+function resetAggregate(): UploadAggregate {
+  return {
+    upserted: 0,
+    requested: 0,
+    embeddedSuccess: 0,
+    embeddedFailed: 0,
+    embedErrors: [],
+    readErrors: [],
+  }
+}
 
 let scanning = false
 let uploading = false
@@ -216,89 +255,214 @@ function toBase64(data: Uint8Array): string {
 
 async function batchUpload(items: any[]) {
   if (!items.length) return
-  uploading = true
-  indexerStore.patchNested(s => {
+  enqueueUploads(items)
+}
+
+function enqueueUploads(items: any[]) {
+  if (!items.length) return
+  uploadQueue.push(...items)
+  totalPlanned += items.length
+
+  indexerStore.patchNested((s) => {
     s.phase = 'uploading'
-    s.upload = { queued: items.length, sent: 0, batches: 0 }
+    if (!s.upload) {
+      s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
+    } else {
+      s.upload.queued = totalPlanned
+    }
     s.lastUpload = undefined
   })
-  const serverUrl = currentConfig.serverUrl.replace(/\/$/, '')
-  const aggregate = {
-    upserted: 0,
-    requested: 0,
-    embeddedSuccess: 0,
-    embeddedFailed: 0,
-    embedErrors: [] as SyncErrorItem[],
-    readErrors: [] as SyncErrorItem[],
+
+  if (!uploadWorkerActive) {
+    aggregateTotals = resetAggregate()
+    uploadWorkerActive = true
+    void uploadWorkerLoop()
   }
-  for (let i = 0; i < items.length; i += BATCH_SIZE) {
-    const batch = items.slice(i, i + BATCH_SIZE)
-    const localReadErrors: SyncErrorItem[] = []
-    const shouldInlineBytes = currentConfig.privacyMode === 'hybrid'
-    const payloadItems = []
-    for (const m of batch) {
-      const base: any = {
-        user_id: currentConfig.userId,
-        modality: m.modality,
-        uri: m.path,
-        ts: m.modified,
-        lat: m.lat,
-        lon: m.lon,
-      }
-      if (shouldInlineBytes && typeof m.path === 'string' && m.path && (m.modality === 'image' || m.modality === 'pdf_page')) {
-        try {
-          const raw = await readFile(m.path)
-          const bytes = raw instanceof Uint8Array ? raw : Uint8Array.from(raw as unknown as number[])
-          if (bytes.length === 0) {
-            localReadErrors.push({ uri: m.path, error: 'file empty' })
-          } else if (bytes.length > MAX_INLINE_FILE_BYTES) {
-            localReadErrors.push({ uri: m.path, error: `file too large (${(bytes.length / (1024 * 1024)).toFixed(1)}MB)` })
+}
+
+async function uploadWorkerLoop(): Promise<void> {
+  uploading = true
+  try {
+    while (uploadQueue.length) {
+      const chunk = uploadQueue.splice(0, STREAM_CHUNK_SIZE)
+      const { payloadItems, localReadErrors } = await prepareStreamPayload(chunk)
+
+      const serverUrlRaw = (currentConfig.serverUrl || '').trim().replace(/\/$/, '')
+      if (!serverUrlRaw) {
+        aggregateTotals.embedErrors.push({ uri: 'batch', error: 'server URL missing' })
+        aggregateTotals.embeddedFailed += chunk.length
+        sentCount += chunk.length
+        processedBatches += 1
+        indexerStore.patchNested((s) => {
+          if (!s.upload) {
+            s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
           } else {
-            base.bytes_b64 = toBase64(bytes)
+            s.upload.sent = sentCount
+            s.upload.batches = processedBatches
+            s.upload.queued = totalPlanned
           }
-        } catch (err: any) {
-          localReadErrors.push({ uri: m.path, error: err?.message || 'read failed' })
+        })
+        continue
+      }
+
+      let result: SyncResult | null = null
+      if (payloadItems.length) {
+        try {
+          result = await sendStreamChunk(serverUrlRaw, payloadItems)
+        } catch (err) {
+          console.warn('stream chunk failed', err)
+          let requeued = false
+          for (const item of chunk) {
+            const retries = ((item as any).__retry ?? 0) + 1
+            ;(item as any).__retry = retries
+            if (retries <= STREAM_REQUEUE_LIMIT) {
+              requeued = true
+            }
+          }
+          if (requeued) {
+            uploadQueue.unshift(...chunk)
+            await delay(STREAM_RETRY_DELAY_MS)
+            continue
+          }
+          aggregateTotals.embedErrors.push({ uri: 'batch', error: err instanceof Error ? err.message : String(err) })
+          aggregateTotals.embeddedFailed += payloadItems.length
         }
       }
-      payloadItems.push(base)
+
+      processedBatches += 1
+
+      if (result) {
+        const requested = result.requested_embeds ?? payloadItems.length
+        const successCount = result.embedded_success ?? result.embedded_images ?? result.queued_embeds ?? 0
+        const failed = result.embedded_failed ?? Math.max(0, requested - successCount)
+        aggregateTotals.upserted += result.upserted ?? 0
+        aggregateTotals.requested += requested
+        aggregateTotals.embeddedSuccess += successCount
+        aggregateTotals.embeddedFailed += failed
+        if (Array.isArray(result.embed_errors)) aggregateTotals.embedErrors.push(...result.embed_errors)
+        if (Array.isArray(result.read_errors)) aggregateTotals.readErrors.push(...result.read_errors)
+      } else if (payloadItems.length) {
+        aggregateTotals.requested += payloadItems.length
+      }
+
+      if (localReadErrors.length) {
+        aggregateTotals.readErrors.push(...localReadErrors)
+        aggregateTotals.embeddedFailed += localReadErrors.length
+      }
+
+      sentCount += chunk.length
+
+      indexerStore.patchNested((s) => {
+        if (!s.upload) {
+          s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
+        } else {
+          s.upload.sent = sentCount
+          s.upload.batches = processedBatches
+          s.upload.queued = totalPlanned
+        }
+      })
+
+      for (const item of chunk) {
+        if ((item as any).__retry !== undefined) {
+          delete (item as any).__retry
+        }
+      }
     }
-    try {
-      const result = await invoke<SyncResult>('sync_index', { serverUrl, payload: { items: payloadItems } })
-      aggregate.upserted += result.upserted ?? 0
-      aggregate.requested += result.requested_embeds ?? payloadItems.length
-      const successCount = result.embedded_success ?? result.embedded_images ?? 0
-      aggregate.embeddedSuccess += successCount
-      aggregate.embeddedFailed += result.embedded_failed ?? 0
-      if (Array.isArray(result.embed_errors)) aggregate.embedErrors.push(...result.embed_errors)
-      if (Array.isArray(result.read_errors)) aggregate.readErrors.push(...result.read_errors)
-      if (localReadErrors.length) aggregate.readErrors.push(...localReadErrors)
-    } catch (e) {
-      console.warn('batch upload failed', e)
-      aggregate.requested += batch.length
-      aggregate.embeddedFailed += batch.length
-      aggregate.embedErrors.push({ uri: 'batch', error: String(e) })
-      if (localReadErrors.length) aggregate.readErrors.push(...localReadErrors)
-    }
-    indexerStore.patchNested(s => { if (s.upload) { s.upload.sent += batch.length; s.upload.batches += 1 } })
+  } finally {
+    uploading = false
+    uploadWorkerActive = false
+    finalizeUploadAggregate()
+    totalPlanned = 0
+    sentCount = 0
+    processedBatches = 0
   }
-  uploading = false
-  indexerStore.patchNested(s => {
-    if (s.phase === 'uploading') s.phase = 'idle'
+}
+
+async function prepareStreamPayload(items: any[]): Promise<{ payloadItems: UploadPayloadItem[]; localReadErrors: SyncErrorItem[] }> {
+  const payloadItems: UploadPayloadItem[] = []
+  const localReadErrors: SyncErrorItem[] = []
+  const userId = (currentConfig.userId || '').trim()
+  const shouldInlineBytes = currentConfig.privacyMode === 'hybrid'
+
+  for (const m of items) {
+    const uri = typeof m.path === 'string' ? m.path : ''
+    const modality = m.modality as string | undefined
+    if (!userId || !uri || !modality) {
+      localReadErrors.push({ uri: uri || 'unknown', error: 'missing metadata' })
+      continue
+    }
+
+    const base: UploadPayloadItem = {
+      user_id: userId,
+      modality,
+      uri,
+      ts: m.modified,
+      lat: m.lat,
+      lon: m.lon,
+    }
+
+    if (shouldInlineBytes && (modality === 'image' || modality === 'pdf_page')) {
+      try {
+        const raw = await readFile(uri)
+        const bytes = raw instanceof Uint8Array ? raw : Uint8Array.from(raw as unknown as number[])
+        if (bytes.length === 0) {
+          localReadErrors.push({ uri, error: 'file empty' })
+          continue
+        }
+        if (bytes.length > MAX_INLINE_FILE_BYTES) {
+          localReadErrors.push({ uri, error: `file too large (${(bytes.length / (1024 * 1024)).toFixed(1)}MB)` })
+          continue
+        }
+        base.bytes_b64 = toBase64(bytes)
+      } catch (err: any) {
+        localReadErrors.push({ uri, error: err?.message || 'read failed' })
+        continue
+      }
+    }
+
+    payloadItems.push(base)
+  }
+
+  return { payloadItems, localReadErrors }
+}
+
+async function sendStreamChunk(serverUrl: string, payloadItems: UploadPayloadItem[]): Promise<SyncResult | null> {
+  if (!payloadItems.length) return null
+  return invoke<SyncResult>('sync_index', { serverUrl, payload: { items: payloadItems } })
+}
+
+function finalizeUploadAggregate() {
+  const summary = {
+    ...aggregateTotals,
+    embeddedFailed: aggregateTotals.embeddedFailed,
+  }
+
+  indexerStore.patchNested((s) => {
+    if (uploadQueue.length === 0 && s.phase === 'uploading') {
+      s.phase = 'idle'
+    }
+    s.upload = null
     s.lastUpload = {
       at: Date.now(),
-      upserted: aggregate.upserted,
-      requested: aggregate.requested,
-      embeddedSuccess: aggregate.embeddedSuccess,
-      embeddedFailed: aggregate.embeddedFailed,
-      embedErrors: aggregate.embedErrors,
-      readErrors: aggregate.readErrors,
+      upserted: summary.upserted,
+      requested: summary.requested,
+      embeddedSuccess: summary.embeddedSuccess,
+      embeddedFailed: summary.embeddedFailed,
+      embedErrors: summary.embedErrors,
+      readErrors: summary.readErrors,
     }
-    if (aggregate.embeddedFailed > 0 || aggregate.readErrors.length > 0) {
-      s.error = `Sync incomplete: ${aggregate.embeddedFailed} embed failures, ${aggregate.readErrors.length} read errors`
+    if (summary.embeddedFailed > 0 || summary.readErrors.length > 0) {
+      s.error = `Sync incomplete: ${summary.embeddedFailed} embed failures, ${summary.readErrors.length} read errors`
     } else if (s.error && s.error.startsWith('Sync incomplete')) {
       s.error = undefined
     }
   })
+
+  aggregateTotals = resetAggregate()
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
 export function useIndexer<T>(selector: (s: IndexerState) => T): T {

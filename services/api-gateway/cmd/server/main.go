@@ -77,6 +77,7 @@ func main() {
 	app.Options("/search", func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	app.Post("/search", handlers.PostSearch)
 	app.Post("/sync", handlers.PostSync)
+	app.Post("/sync/stream", handlers.PostSyncStream)
 	app.Get("/stats", handlers.GetStats)
 
 	// trigger embedder warmup asynchronously (non-blocking)
