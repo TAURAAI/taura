@@ -107,6 +107,7 @@ func (p *imageProcessor) enqueue(task imageTask) error {
 		case <-p.closed:
 			return errors.New("embed queue closed")
 		case p.tasks <- task:
+			log.Printf("embed queue accepted uri=%s media_id=%s depth=%d", task.uri, task.mediaID, len(p.tasks))
 			return nil
 		}
 	}
@@ -117,6 +118,7 @@ func (p *imageProcessor) enqueue(task imageTask) error {
 	case <-p.closed:
 		return errors.New("embed queue closed")
 	case p.tasks <- task:
+		log.Printf("embed queue accepted uri=%s media_id=%s depth=%d", task.uri, task.mediaID, len(p.tasks))
 		return nil
 	case <-timer.C:
 		return fmt.Errorf("embed queue enqueue timeout after %s", p.offerTimeout)
@@ -166,6 +168,7 @@ func (p *imageProcessor) processBatch(batch []imageTask) {
 	for i, task := range batch {
 		payload[i] = task.bytes
 	}
+	log.Printf("embed queue dispatch batch=%d current_depth=%d", len(batch), len(p.tasks))
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(envInt("EMBEDDER_QUEUE_REQUEST_TIMEOUT_SECONDS", 60))*time.Second)
 	defer cancel()

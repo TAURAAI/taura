@@ -134,18 +134,24 @@ func PostSync(c *fiber.Ctx) error {
 			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
 				bytes, readErr := os.ReadFile(item.URI)
 				if readErr != nil {
-					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: readErr.Error()})
+					msg := readErr.Error()
+					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: msg})
+					log.Printf("/sync read failure uri=%s err=%s", item.URI, msg)
 					continue
 				}
 				if len(bytes) == 0 {
 					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: "file empty"})
+					log.Printf("/sync read failure uri=%s err=file empty", item.URI)
 					continue
 				}
 				requestedEmbeds++
 				if err := embed.EnqueueImage(mediaID, item.URI, bytes); err != nil {
 					embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: err.Error()})
+					log.Printf("/sync enqueue failed uri=%s err=%s", item.URI, err)
 				} else {
 					queuedEmbeds++
+					queueDepthNow := embed.QueueDepth()
+					log.Printf("/sync enqueued uri=%s media_id=%s queue_depth=%d", item.URI, mediaID, queueDepthNow)
 				}
 			}
 		}
@@ -153,6 +159,18 @@ func PostSync(c *fiber.Ctx) error {
 
 	embedStatus := embed.HealthSnapshot()
 	queueDepth := embed.QueueDepth()
+	log.Printf(
+		"/sync summary items=%d requested=%d queued=%d read_failures=%d embed_failures=%d queue_depth=%d embedder_healthy=%v last_success=%s last_error=%s",
+		len(req.Items),
+		requestedEmbeds,
+		queuedEmbeds,
+		len(readFailures),
+		len(embedFailures),
+		queueDepth,
+		embedStatus.Healthy,
+		embedStatus.LastSuccess.Format(time.RFC3339),
+		embedStatus.LastError,
+	)
 
 	return c.JSON(fiber.Map{
 		"upserted":          upserted,
