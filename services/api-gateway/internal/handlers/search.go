@@ -315,7 +315,7 @@ func PostSearch(c *fiber.Ctx) error {
 		}
 	}()
 
-	if _, err := tx.Exec(ctx, "SET LOCAL ivfflat.probes = $1", probes); err != nil {
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL ivfflat.probes = %d", probes)); err != nil {
 		log.Printf("[SEARCH] Failed to set ivfflat probes=%d: %v", probes, err)
 		return fiber.NewError(fiber.StatusInternalServerError, "query error")
 	}

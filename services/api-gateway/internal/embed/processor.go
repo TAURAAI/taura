@@ -62,7 +62,7 @@ func InitImageProcessor(database *db.Database) {
 		if retrySeconds <= 0 {
 			retrySeconds = 5
 		}
-		offerMs := envInt("EMBEDDER_QUEUE_OFFER_TIMEOUT_MS", 5000)
+		offerMs := envInt("EMBEDDER_QUEUE_OFFER_TIMEOUT_MS", 0)
 		if offerMs < 0 {
 			offerMs = 0
 		}
