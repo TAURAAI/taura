@@ -44,10 +44,16 @@ export interface IndexerState {
     startedAt?: number
     finishedAt?: number
   } | null
-  upload: {
-    queued: number
-    sent: number
-    batches: number
+ upload: {
+   queued: number
+   sent: number
+   batches: number
+   requested: number
+   succeeded: number
+   failed: number
+   queueDepth: number
+   lastUpdated: number
+    chunksProcessed: number
   } | null
   lastUpload?: {
     at: number
@@ -57,6 +63,8 @@ export interface IndexerState {
     embeddedFailed: number
     embedErrors: SyncErrorItem[]
     readErrors: SyncErrorItem[]
+    queueDepth: number
+    chunksProcessed: number
   }
   lastScanTime?: string
   error?: string
@@ -113,6 +121,8 @@ type UploadAggregate = {
   embeddedFailed: number
   embedErrors: SyncErrorItem[]
   readErrors: SyncErrorItem[]
+  queueDepth: number
+  chunksProcessed: number
 }
 
 const uploadQueue: any[] = []
@@ -130,7 +140,41 @@ function resetAggregate(): UploadAggregate {
     embeddedFailed: 0,
     embedErrors: [],
     readErrors: [],
+    queueDepth: 0,
+    chunksProcessed: 0,
   }
+}
+
+function applyUploadSnapshot() {
+  const snapshot = {
+    queued: totalPlanned,
+    sent: sentCount,
+    batches: processedBatches,
+    requested: aggregateTotals.requested,
+    succeeded: aggregateTotals.embeddedSuccess,
+    failed: aggregateTotals.embeddedFailed,
+    queueDepth: aggregateTotals.queueDepth,
+    chunksProcessed: aggregateTotals.chunksProcessed,
+    lastUpdated: Date.now(),
+  }
+
+  indexerStore.patchNested((s) => {
+    s.phase = 'uploading'
+    if (!s.upload) {
+      s.upload = { ...snapshot }
+    } else {
+      s.upload.queued = snapshot.queued
+      s.upload.sent = snapshot.sent
+      s.upload.batches = snapshot.batches
+      s.upload.requested = snapshot.requested
+      s.upload.succeeded = snapshot.succeeded
+      s.upload.failed = snapshot.failed
+      s.upload.queueDepth = snapshot.queueDepth
+      s.upload.chunksProcessed = snapshot.chunksProcessed
+      s.upload.lastUpdated = snapshot.lastUpdated
+    }
+    s.lastUpload = undefined
+  })
 }
 
 let scanning = false
@@ -263,15 +307,7 @@ function enqueueUploads(items: any[]) {
   uploadQueue.push(...items)
   totalPlanned += items.length
 
-  indexerStore.patchNested((s) => {
-    s.phase = 'uploading'
-    if (!s.upload) {
-      s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
-    } else {
-      s.upload.queued = totalPlanned
-    }
-    s.lastUpload = undefined
-  })
+  applyUploadSnapshot()
 
   if (!uploadWorkerActive) {
     aggregateTotals = resetAggregate()
@@ -291,17 +327,12 @@ async function uploadWorkerLoop(): Promise<void> {
       if (!serverUrlRaw) {
         aggregateTotals.embedErrors.push({ uri: 'batch', error: 'server URL missing' })
         aggregateTotals.embeddedFailed += chunk.length
+        aggregateTotals.requested += chunk.length
+        aggregateTotals.queueDepth = uploadQueue.length
         sentCount += chunk.length
         processedBatches += 1
-        indexerStore.patchNested((s) => {
-          if (!s.upload) {
-            s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
-          } else {
-            s.upload.sent = sentCount
-            s.upload.batches = processedBatches
-            s.upload.queued = totalPlanned
-          }
-        })
+        aggregateTotals.chunksProcessed += 1
+        applyUploadSnapshot()
         continue
       }
 
@@ -330,6 +361,7 @@ async function uploadWorkerLoop(): Promise<void> {
       }
 
       processedBatches += 1
+      aggregateTotals.chunksProcessed += 1
 
       if (result) {
         const requested = result.requested_embeds ?? payloadItems.length
@@ -341,6 +373,10 @@ async function uploadWorkerLoop(): Promise<void> {
         aggregateTotals.embeddedFailed += failed
         if (Array.isArray(result.embed_errors)) aggregateTotals.embedErrors.push(...result.embed_errors)
         if (Array.isArray(result.read_errors)) aggregateTotals.readErrors.push(...result.read_errors)
+        aggregateTotals.queueDepth =
+          typeof result.embed_queue_depth === 'number'
+            ? result.embed_queue_depth
+            : uploadQueue.length
       } else if (payloadItems.length) {
         aggregateTotals.requested += payloadItems.length
       }
@@ -348,19 +384,11 @@ async function uploadWorkerLoop(): Promise<void> {
       if (localReadErrors.length) {
         aggregateTotals.readErrors.push(...localReadErrors)
         aggregateTotals.embeddedFailed += localReadErrors.length
+        aggregateTotals.requested += localReadErrors.length
       }
 
       sentCount += chunk.length
-
-      indexerStore.patchNested((s) => {
-        if (!s.upload) {
-          s.upload = { queued: totalPlanned, sent: sentCount, batches: processedBatches }
-        } else {
-          s.upload.sent = sentCount
-          s.upload.batches = processedBatches
-          s.upload.queued = totalPlanned
-        }
-      })
+      applyUploadSnapshot()
 
       for (const item of chunk) {
         if ((item as any).__retry !== undefined) {
@@ -433,8 +461,14 @@ async function sendStreamChunk(serverUrl: string, payloadItems: UploadPayloadIte
 
 function finalizeUploadAggregate() {
   const summary = {
-    ...aggregateTotals,
+    upserted: aggregateTotals.upserted,
+    requested: aggregateTotals.requested,
+    embeddedSuccess: aggregateTotals.embeddedSuccess,
     embeddedFailed: aggregateTotals.embeddedFailed,
+    embedErrors: [...aggregateTotals.embedErrors],
+    readErrors: [...aggregateTotals.readErrors],
+    queueDepth: aggregateTotals.queueDepth,
+    chunksProcessed: aggregateTotals.chunksProcessed,
   }
 
   indexerStore.patchNested((s) => {
@@ -450,6 +484,8 @@ function finalizeUploadAggregate() {
       embeddedFailed: summary.embeddedFailed,
       embedErrors: summary.embedErrors,
       readErrors: summary.readErrors,
+      queueDepth: summary.queueDepth,
+      chunksProcessed: summary.chunksProcessed,
     }
     if (summary.embeddedFailed > 0 || summary.readErrors.length > 0) {
       s.error = `Sync incomplete: ${summary.embeddedFailed} embed failures, ${summary.readErrors.length} read errors`
@@ -465,11 +501,8 @@ function delay(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
-export function useIndexer<T>(selector: (s: IndexerState) => T): T {
+export function useIndexer<T>(selector: (state: IndexerState) => T): T {
   const getSnapshot = useCallback(() => selector(indexerStore.get()), [selector])
-  const subscribe = useCallback(
-    (onStoreChange: () => void) => indexerStore.subscribe((_state) => onStoreChange()),
-    [],
-  )
+  const subscribe = useCallback((onChange: () => void) => indexerStore.subscribe(() => onChange()), [])
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

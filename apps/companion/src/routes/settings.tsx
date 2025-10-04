@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { indexerStore, setRootPath, startFullScan, stopScan } from '../indexer'
 import { AppShell } from '../components/AppShell'
@@ -9,285 +9,358 @@ export const Route = createFileRoute('/settings')({
   component: SettingsApp,
 })
 
+type PrivacyMode = 'hybrid' | 'strict-local'
+
+function useIndexerState() {
+  return useSyncExternalStore(
+    (onChange) => indexerStore.subscribe(() => onChange()),
+    () => indexerStore.get(),
+  )
+}
 
 function SettingsApp() {
-  const [, forceRerender] = useState(0)
+  const idx = useIndexerState()
   const config = useAppConfig()
-  const [configDraft, setConfigDraft] = useState({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
+  const [configDraft, setConfigDraft] = useState<{ serverUrl: string; userId: string; privacyMode: PrivacyMode }>({
+    serverUrl: config.serverUrl,
+    userId: config.userId,
+    privacyMode: (config.privacyMode as PrivacyMode) ?? 'hybrid',
+  })
+
+  const initialThrottle = useMemo(
+    () => Number(localStorage.getItem('taura.scan.throttle.ms') || '0'),
+    [],
+  )
+  const [throttleMs, setThrottleMs] = useState(initialThrottle)
 
   useEffect(() => {
+    if (idx.rootPath) return
     void (async () => {
       try {
         const defaultPath = await invoke<string | null>('get_default_folder')
-        if (defaultPath && !indexerStore.get().rootPath) {
+        if (defaultPath) {
           await setRootPath(defaultPath)
         }
-      } catch (e) {
-        console.error('Failed to load default folder:', e)
+      } catch (err) {
+        console.error('Failed to load default folder:', err)
       }
     })()
-  }, [])
+  }, [idx.rootPath])
 
   useEffect(() => {
-    setConfigDraft({ serverUrl: config.serverUrl, userId: config.userId, privacyMode: config.privacyMode })
+    setConfigDraft({
+      serverUrl: config.serverUrl,
+      userId: config.userId,
+      privacyMode: (config.privacyMode as PrivacyMode) ?? 'hybrid',
+    })
   }, [config.serverUrl, config.userId, config.privacyMode])
+
+  const scanningActive = idx.phase === 'scanning'
+  const scanIndeterminate = scanningActive && (!idx.scan || idx.scan.total === 0)
+  const scanPct =
+    !scanIndeterminate && idx.scan && idx.scan.total > 0
+      ? Math.min(100, (idx.scan.processed / idx.scan.total) * 100)
+      : 0
+
+  const streaming = Boolean(idx.upload)
+  const uploadState = idx.upload
+  const lastUpload = idx.lastUpload
+
+  const queueDepth = streaming
+    ? uploadState!.queueDepth
+    : lastUpload?.queueDepth ?? 0
+  const requested = streaming
+    ? uploadState!.requested
+    : lastUpload?.requested ?? 0
+  const succeeded = streaming
+    ? uploadState!.succeeded
+    : lastUpload?.embeddedSuccess ?? 0
+  const failed = streaming
+    ? uploadState!.failed
+    : lastUpload?.embeddedFailed ?? 0
+  const chunksProcessed = streaming
+    ? uploadState!.chunksProcessed
+    : lastUpload?.chunksProcessed ?? 0
+  const queuedTotal = streaming
+    ? uploadState!.queued
+    : lastUpload?.requested ?? 0
+  const sentSoFar = streaming
+    ? uploadState!.sent
+    : queuedTotal
+  const uploadPct = queuedTotal > 0 ? Math.min(100, (sentSoFar / queuedTotal) * 100) : 0
+  const streamLabel = streaming
+    ? `${uploadState!.sent}/${uploadState!.queued}`
+    : lastUpload
+    ? `${lastUpload.embeddedSuccess}/${lastUpload.requested}`
+    : '0/0'
+  const streamStatus = streaming
+    ? 'Streaming to embedder'
+    : queueDepth
+    ? 'Awaiting GPU capacity'
+    : 'Queue idle'
+  const streamDetail = streaming
+    ? `Chunks processed: ${chunksProcessed}`
+    : lastUpload
+    ? `Last run processed ${chunksProcessed} chunk${chunksProcessed === 1 ? '' : 's'}`
+    : 'No uploads yet'
+  const uploadHasFailures = streaming
+    ? uploadState!.failed > 0
+    : !!lastUpload && (lastUpload.embeddedFailed > 0 || lastUpload.readErrors.length > 0 || lastUpload.embedErrors.length > 0)
+  const lastUpdated = streaming ? uploadState!.lastUpdated : lastUpload?.at ?? Date.now()
+
+  const mostRecentErrors = useMemo(() => {
+    if (streaming || !lastUpload) return []
+    return [...lastUpload.embedErrors, ...lastUpload.readErrors].slice(0, 3)
+  }, [streaming, lastUpload])
 
   async function handlePickFolder() {
     try {
-      console.debug('[Settings] invoking pick_folder')
       const result = await invoke<string | null>('pick_folder')
-      console.debug('[Settings] pick_folder result:', result)
       if (result) {
         await setRootPath(result)
-        console.debug('[Settings] after setRootPath, store rootPath=', indexerStore.get().rootPath, 'pendingRoot=', indexerStore.get().pendingRoot)
-        await new Promise((res) => setTimeout(res, 150))
-        const nowRoot = indexerStore.get().rootPath
-        const nowPending = indexerStore.get().pendingRoot
-        if (nowRoot !== result && nowPending !== result) {
-          try {
-            localStorage.setItem('taura.root', result)
-            indexerStore.patch({ rootPath: result, pendingRoot: null })
-            forceRerender(x => x + 1)
-          } catch (e) {
-            console.warn('fallback persist failed', e)
-          }
-        }
       }
-    } catch (e) {
-      console.error('Failed to pick folder:', e)
+    } catch (err) {
+      console.error('Failed to pick folder:', err)
     }
   }
-
-  // manual scan/index removed; automatic background system handles enumeration + syncing
 
   async function handleShowOverlay() {
     try {
       await invoke('toggle_overlay')
-    } catch (e) {
-      console.error('Failed to show overlay:', e)
+    } catch (err) {
+      console.error('Failed to show overlay:', err)
     }
   }
 
-  // subscribe to indexer store for live updates
-  useEffect(() => {
-    const unsub = indexerStore.subscribe(() => forceRerender(x => x + 1))
-    return () => { unsub() }
-  }, [])
-
-  const idx = indexerStore.get()
-  const scanIndeterminate = idx.scan && idx.scan.total === 0 && idx.phase === 'scanning'
-  const scanPct = !scanIndeterminate && idx.scan && idx.scan.total > 0 ? Math.min(100, (idx.scan.processed / idx.scan.total) * 100) : 0
-  const throttleMs = Number(localStorage.getItem('taura.scan.throttle.ms') || '0')
-  const lastUpload = idx.lastUpload
-  const uploadHasFailures = !!lastUpload && (lastUpload.embeddedFailed > 0 || lastUpload.readErrors.length > 0)
-
-  async function updateThrottle(v: number) {
-    localStorage.setItem('taura.scan.throttle.ms', String(v))
-    try { await invoke('set_default_throttle', { ms: v }) } catch (e) { console.warn('failed set_default_throttle', e) }
-    forceRerender(x => x + 1)
+  async function updateThrottle(value: number) {
+    const clamped = Math.max(0, Math.round(value))
+    setThrottleMs(clamped)
+    localStorage.setItem('taura.scan.throttle.ms', String(clamped))
+    try {
+      await invoke('set_default_throttle', { ms: clamped })
+    } catch (err) {
+      console.warn('failed set_default_throttle', err)
+    }
   }
-  const uploadPct = idx.upload && idx.upload.queued > 0 ? Math.min(100, (idx.upload.sent / idx.upload.queued) * 100) : 0
+
+  const handlePrivacyChange = (mode: PrivacyMode) => {
+    setConfigDraft((prev) => ({ ...prev, privacyMode: mode }))
+    updateConfig({ privacyMode: mode })
+  }
+
+  const handleServerBlur = () => updateConfig({ serverUrl: configDraft.serverUrl })
+  const handleUserBlur = () => updateConfig({ userId: configDraft.userId })
 
   return (
     <AppShell>
       <header className="mb-8">
-        <h1 className="heading-xl mb-2">Settings</h1>
-        <p className="muted text-sm">Manage indexing, server, and overlay behavior</p>
+        <h1 className="text-3xl font-semibold text-white">Settings</h1>
+        <p className="text-sm text-slate-400">Fine-tune indexing, privacy, and the GPU stream.</p>
       </header>
 
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Folder & Indexing */}
-        <div className="glass-card p-6 flex flex-col gap-5 md:col-span-2">
-          <div className="flex flex-col gap-2">
-            <h2 className="text-base font-semibold text-white">Folder & Indexing</h2>
-            <div className="text-xs text-white/50">Choose a root folder and Taura will gently, continuously index it in the background.</div>
-          </div>
-
-          <div className="flex flex-col gap-2">
-            <label className="text-[11px] uppercase tracking-wide text-white/40">Current Folder</label>
-            <div className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-xs font-mono text-white/80 break-all flex items-center justify-between gap-4">
-              <div className="min-w-0 truncate">
-                {idx.pendingRoot && idx.pendingRoot !== idx.rootPath ? (
-                  <span className="inline-flex items-center gap-2">
-                    <span className="text-white/40 line-through max-w-[360px] truncate">{idx.rootPath || '—'}</span>
-                    <svg className="w-3 h-3 text-white/35" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={2}><path d="M5 10h10M12 5l5 5-5 5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    <span>{idx.pendingRoot}</span>
-                    <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] border border-amber-400/30">switching…</span>
-                  </span>
-                ) : (
-                  <span>{idx.rootPath || 'No folder selected'}</span>
-                )}
-              </div>
-
-              <div className="flex shrink-0 gap-2">
-                <button onClick={handlePickFolder} className="btn-outline h-8 px-3 text-xs">{idx.pendingRoot && idx.pendingRoot !== idx.rootPath ? 'Changing…' : (idx.rootPath ? 'Change' : 'Choose')}</button>
-                <button onClick={() => startFullScan()} disabled={!idx.rootPath || idx.phase === 'scanning'} className="btn-outline h-8 px-3 text-xs disabled:opacity-40 disabled:cursor-not-allowed">{idx.phase === 'scanning' ? 'Scanning…' : 'Rescan'}</button>
-                {idx.phase === 'scanning' && <button onClick={() => stopScan()} className="btn-outline h-8 px-3 text-xs">Stop</button>}
-              </div>
+      <section className="grid gap-6 md:grid-cols-2">
+        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/30">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-white">Library folder</h2>
+              <p className="text-xs text-slate-400">Taura indexes this path silently in the background.</p>
             </div>
+            {idx.pendingRoot && idx.pendingRoot !== idx.rootPath && (
+              <span className="inline-flex items-center rounded-full bg-indigo-500/20 px-3 py-1 text-[10px] uppercase tracking-wide text-indigo-200">
+                Switching…
+              </span>
+            )}
           </div>
 
-          <div className="flex flex-wrap gap-2 text-[11px] text-white/60">
-            <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Phase: {idx.phase}</span>
-            {idx.scan && <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Scan {idx.scan.processed}/{idx.scan.total || '∞'}</span>}
-            {idx.upload && <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Upload {idx.upload.sent}/{idx.upload.queued}</span>}
-            {idx.lastScanTime && <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Last {new Date(idx.lastScanTime).toLocaleTimeString()}</span>}
-            <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Throttle {throttleMs}ms</span>
+          <div className="rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-xs text-slate-200">
+            <div className="truncate font-mono text-xs">
+              {idx.rootPath || 'Not selected yet'}
+            </div>
+            {idx.pendingRoot && idx.pendingRoot !== idx.rootPath && (
+              <div className="mt-1 text-[11px] text-slate-400">Next: {idx.pendingRoot}</div>
+            )}
           </div>
 
-          {lastUpload && (
-            <div className={`text-xs rounded-md border px-3 py-2 ${uploadHasFailures ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'}`}>
-              <div className="font-medium">Last sync {new Date(lastUpload.at).toLocaleTimeString()} • {lastUpload.embeddedSuccess}/{lastUpload.requested} embedded</div>
-              {uploadHasFailures ? (
-                <div className="mt-1 space-y-1">
-                  {lastUpload.embedErrors.slice(0, 3).map((err, issueIdx) => (
-                    <div key={`embed-${issueIdx}`} className="truncate">⚠️ {err.uri}: {err.error}</div>
-                  ))}
-                  {lastUpload.readErrors.slice(0, 2).map((err, issueIdx) => (
-                    <div key={`read-${issueIdx}`} className="truncate">📁 {err.uri}: {err.error}</div>
-                  ))}
-                  {(lastUpload.embedErrors.length + lastUpload.readErrors.length) > 5 && (
-                    <div className="text-[11px] opacity-80">{lastUpload.embedErrors.length + lastUpload.readErrors.length - 5} more issues…</div>
-                  )}
-                </div>
+          <div className="mt-4 space-y-3 text-xs text-slate-300">
+            <div className="flex justify-between">
+              <span>Scan progress</span>
+              <span>{scanIndeterminate ? 'Exploring…' : `${idx.scan?.processed ?? 0} files`}</span>
+            </div>
+            <div className={`relative h-2 overflow-hidden rounded-full bg-slate-800 ${scanIndeterminate ? 'animate-pulse' : ''}`}>
+              {scanIndeterminate ? (
+                <div className="absolute inset-0 animate-[shimmer_1.8s_linear_infinite] bg-gradient-to-r from-transparent via-white/30 to-transparent" />
               ) : (
-                <div className="mt-1 opacity-80">All items embedded successfully.</div>
+                <div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-fuchsia-500 transition-all" style={{ width: `${scanPct}%` }} />
               )}
             </div>
-          )}
 
-          <div className="flex flex-col gap-3">
-            {(idx.phase === 'scanning') && (
-              <div className="w-full h-2 rounded bg-white/10 overflow-hidden relative">
-                {scanIndeterminate ? (
-                  <div className="absolute inset-0 animate-shimmer bg-[linear-gradient(110deg,rgba(255,255,255,0.08)_10%,rgba(255,255,255,0.35)_18%,rgba(255,255,255,0.08)_33%)] bg-[length:200%_100%]" />
+            <div className="flex justify-between pt-2">
+              <span>Embed stream</span>
+              <span>{streamLabel}</span>
+            </div>
+            <div className="relative h-2 overflow-hidden rounded-full bg-slate-800">
+              <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-teal-400 transition-all" style={{ width: `${uploadPct}%` }} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+              <span>{streamStatus}</span>
+              <span>•</span>
+              <span>{streamDetail}</span>
+              {queueDepth ? (
+                <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-emerald-200">Queue: {queueDepth}</span>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button className="btn-primary" onClick={handlePickFolder}>
+              Choose folder
+            </button>
+            <button className="btn-outline" onClick={() => startFullScan().catch(() => {})}>
+              Rescan now
+            </button>
+            {scanningActive && (
+              <button className="btn-ghost" onClick={() => stopScan().catch(() => {})}>
+                Stop scan
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/30">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-white">Embed stream details</h2>
+            <p className="text-xs text-slate-400">Live stats from the GPU queue.</p>
+          </div>
+
+          <dl className="grid gap-3 text-sm text-slate-200">
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Requested</dt>
+              <dd>{requested.toLocaleString()}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Succeeded</dt>
+              <dd>{succeeded.toLocaleString()}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Failures</dt>
+              <dd className={failed ? 'text-amber-300' : ''}>{failed.toLocaleString()}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Queue depth</dt>
+              <dd>{queueDepth.toLocaleString()}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Chunks processed</dt>
+              <dd>{chunksProcessed.toLocaleString()}</dd>
+            </div>
+            <div className="flex items-baseline justify-between">
+              <dt className="text-[11px] uppercase tracking-wide text-slate-400">Last updated</dt>
+              <dd>{new Date(lastUpdated).toLocaleTimeString()}</dd>
+            </div>
+          </dl>
+
+          <div className="mt-4 rounded-xl border border-slate-800/50 bg-slate-950/70 p-3 text-xs">
+            {uploadHasFailures ? (
+              <div className="space-y-2">
+                <p className="font-medium text-amber-300">Issues detected</p>
+                {mostRecentErrors.length > 0 ? (
+                  <ul className="space-y-1">
+                    {mostRecentErrors.map((err, idx) => (
+                      <li key={idx} className="flex flex-col gap-0.5">
+                        <span className="truncate font-mono text-[11px] text-slate-300" title={err.uri}>
+                          {err.uri}
+                        </span>
+                        <span className="text-[11px] text-rose-300">{err.error}</span>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
-                  <div className="h-full bg-gradient-to-r from-indigo-500 to-fuchsia-500 transition-all" style={{ width: `${scanPct}%` }} />
+                  <p className="text-slate-400">Waiting for retry results…</p>
                 )}
               </div>
+            ) : (
+              <p className="text-slate-400">All recent uploads succeeded.</p>
             )}
+          </div>
+        </div>
 
-            {(idx.phase === 'uploading' || uploadPct > 0) && (
-              <div className="w-full h-2 rounded bg-white/10 overflow-hidden">
-                <div className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all" style={{ width: `${uploadPct}%` }} />
-              </div>
-            )}
+        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/30 md:col-span-2">
+          <div className="mb-4">
+            <h2 className="text-base font-semibold text-white">Server & privacy</h2>
+            <p className="text-xs text-slate-400">Adjust connection settings and scan pacing.</p>
+          </div>
 
-            <div className="flex items-center gap-2 flex-wrap text-[11px] text-white/50">
-              <span>Adjust Throttle</span>
-              <select value={throttleMs} onChange={e => updateThrottle(Number(e.target.value))} className="bg-white/5 border border-white/10 rounded px-2 py-1 focus:outline-none">
-                <option value={0}>Off</option>
-                <option value={10}>10ms</option>
-                <option value={25}>25ms</option>
-                <option value={50}>50ms</option>
-                <option value={100}>100ms</option>
-                <option value={250}>250ms</option>
+          <div className="grid gap-4 md:grid-cols-3">
+            <div className="md:col-span-1">
+              <label className="text-[11px] uppercase tracking-wide text-slate-400">Scan throttle</label>
+              <select
+                value={throttleMs}
+                onChange={(e) => updateThrottle(Number(e.target.value))}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+              >
+                {[0, 10, 25, 50, 100, 250].map((value) => (
+                  <option key={value} value={value}>
+                    {value === 0 ? 'Off' : `${value} ms`}
+                  </option>
+                ))}
               </select>
-              <span className="text-white/30">Higher = gentler disk usage</span>
+              <p className="mt-2 text-[11px] text-slate-400">Higher values slow the scanner to stay unobtrusive.</p>
             </div>
+            <form className="md:col-span-2 grid gap-4 md:grid-cols-2" onSubmit={(e) => e.preventDefault()}>
+              <label className="flex flex-col gap-2 text-xs text-slate-300">
+                <span className="text-[11px] uppercase tracking-wide text-slate-400">Server URL</span>
+                <input
+                  type="text"
+                  value={configDraft.serverUrl}
+                  onChange={(e) => setConfigDraft((prev) => ({ ...prev, serverUrl: e.target.value }))}
+                  onBlur={handleServerBlur}
+                  placeholder="https://api.taura.app"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </label>
+              <label className="flex flex-col gap-2 text-xs text-slate-300">
+                <span className="text-[11px] uppercase tracking-wide text-slate-400">User ID / email</span>
+                <input
+                  type="text"
+                  value={configDraft.userId}
+                  onChange={(e) => setConfigDraft((prev) => ({ ...prev, userId: e.target.value }))}
+                  onBlur={handleUserBlur}
+                  placeholder="you@example.com"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                />
+              </label>
+            </form>
           </div>
 
-          {idx.error && <div className="text-xs text-red-400">Error: {idx.error}</div>}
-        </div>
-
-        {/* Overlay Control */}
-        <div className="glass-card p-6 flex flex-col gap-4">
-          <h2 className="text-base font-semibold text-white">Overlay Control</h2>
-          <div className="text-xs text-white/50">Toggle the search overlay (or use Ctrl+Shift+K).</div>
-          <button onClick={handleShowOverlay} className="btn-outline w-fit">Toggle Overlay</button>
-        </div>
-
-        {/* Advanced */}
-        <div className="glass-card p-6 flex flex-col gap-4 md:col-span-2">
-          <h2 className="text-base font-semibold text-white">Advanced</h2>
-          <div className="grid md:grid-cols-3 gap-4 text-xs">
-            <div className="flex flex-col gap-1">
-              <label className="text-white/40 text-[11px] uppercase tracking-wide">Search Mode</label>
-              <select className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                <option>Semantic</option>
-                <option>Keyword</option>
-                <option>Hybrid</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-white/40 text-[11px] uppercase tracking-wide">Max Results</label>
-              <input type="number" defaultValue={10} className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-white/40 text-[11px] uppercase tracking-wide">Server URL</label>
-              <input type="text" defaultValue="https://unipool.acm.today" className="bg-white/5 border border-white/10 rounded-md px-2 py-1.5 text-white/80 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500" />
-            </div>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <span className="text-[11px] uppercase tracking-wide text-slate-400">Privacy mode</span>
+            <button
+              type="button"
+              onClick={() => handlePrivacyChange('strict-local')}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                configDraft.privacyMode === 'strict-local'
+                  ? 'bg-indigo-500/80 text-white shadow-lg shadow-indigo-500/30'
+                  : 'bg-slate-800/60 text-slate-300'
+              }`}
+            >
+              Strict local
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePrivacyChange('hybrid')}
+              className={`rounded-full px-3 py-1 text-xs transition ${
+                configDraft.privacyMode === 'hybrid'
+                  ? 'bg-indigo-500/80 text-white shadow-lg shadow-indigo-500/30'
+                  : 'bg-slate-800/60 text-slate-300'
+              }`}
+            >
+              Hybrid
+            </button>
           </div>
         </div>
-
-        {/* Server & Account */}
-        <div className="glass-card p-6 flex flex-col gap-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold text-white">Server & Account</h2>
-              <p className="text-xs text-white/45 mt-1 max-w-md">Configure the Taura backend and user identifier used for syncing and search. Changes apply immediately.</p>
-            </div>
-          </div>
-
-          <form className="grid gap-4 md:grid-cols-2" onSubmit={(e) => e.preventDefault()}>
-            <div className="flex flex-col gap-1.5 md:col-span-2">
-              <label className="text-[11px] uppercase tracking-wide text-white/40" htmlFor="server-url">Server URL</label>
-              <input
-                id="server-url"
-                className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                value={configDraft.serverUrl}
-                onChange={(e) => setConfigDraft((prev) => ({ ...prev, serverUrl: e.target.value }))}
-                onBlur={() => updateConfig({ serverUrl: configDraft.serverUrl })}
-                placeholder="https://api.taura.app"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[11px] uppercase tracking-wide text-white/40" htmlFor="user-id">User ID / Email</label>
-              <input
-                id="user-id"
-                className="rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/80 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                value={configDraft.userId}
-                onChange={(e) => setConfigDraft((prev) => ({ ...prev, userId: e.target.value }))}
-                onBlur={() => updateConfig({ userId: configDraft.userId })}
-                placeholder="you@example.com"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <span className="text-[11px] uppercase tracking-wide text-white/40">Privacy Mode</span>
-              <div className="flex gap-3 text-xs">
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="privacy-mode"
-                    className="accent-indigo-500"
-                    checked={configDraft.privacyMode === 'hybrid'}
-                    onChange={() => {
-                      setConfigDraft((prev) => ({ ...prev, privacyMode: 'hybrid' }))
-                      updateConfig({ privacyMode: 'hybrid' })
-                    }}
-                  />
-                  <span className="text-white/70">Hybrid (GPU embeddings)</span>
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name="privacy-mode"
-                    className="accent-indigo-500"
-                    checked={configDraft.privacyMode === 'strict-local'}
-                    onChange={() => {
-                      setConfigDraft((prev) => ({ ...prev, privacyMode: 'strict-local' }))
-                      updateConfig({ privacyMode: 'strict-local' })
-                    }}
-                  />
-                  <span className="text-white/70">Strict-Local</span>
-                </label>
-              </div>
-            </div>
-          </form>
-        </div>
-      </div>
+      </section>
     </AppShell>
   )
 }

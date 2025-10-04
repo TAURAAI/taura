@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
+import { useSyncExternalStore, useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { AppShell } from '../components/AppShell'
 import { QuickSearch } from '../components/QuickSearch'
 import { RecentItems } from '../components/RecentItems'
 import { fetchStats } from '../api'
 import { useAppConfig } from '../state/config'
-import { setRootPath, startFullScan } from '../indexer'
+import { indexerStore, setRootPath, startFullScan } from '../indexer'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -18,9 +18,26 @@ type DashboardStats = {
   lastIndexed: string | null
 }
 
+function useIndexerState() {
+  return useSyncExternalStore(
+    (onChange) => indexerStore.subscribe(() => onChange()),
+    () => indexerStore.get(),
+  )
+}
+
 function HomeScreen() {
+  const idx = useIndexerState()
   const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
+  const uploadState = idx.upload
+  const lastUpload = idx.lastUpload
+  const queueDepth = uploadState ? uploadState.queueDepth : lastUpload?.queueDepth ?? 0
+  const streamSummary = uploadState
+    ? `${uploadState.sent}/${uploadState.queued}`
+    : lastUpload
+    ? `${lastUpload.embeddedSuccess}/${lastUpload.requested}`
+    : '0/0'
+
   const config = useAppConfig()
   const quickActions = [
     {
@@ -137,6 +154,10 @@ function HomeScreen() {
             <div>
               <span className="stat-label">Server URL</span>
               <div className="stat-value text-xs text-white/60 truncate" title={config.serverUrl}>{config.serverUrl}</div>
+            </div>
+            <div>
+              <span className="stat-label">Stream</span>
+              <div className="stat-value text-sm text-white/70">{streamSummary}</div>
             </div>
           </div>
         </div>
