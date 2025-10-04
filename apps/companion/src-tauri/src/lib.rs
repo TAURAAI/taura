@@ -262,15 +262,15 @@ struct SyncErrorItem {
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 struct SyncResult {
-  upserted: usize,
-  embedded_images: Option<usize>,
-  embedded_success: Option<usize>,
-  embedded_failed: Option<usize>,
-  requested_embeds: Option<usize>,
-  queued_embeds: Option<usize>,
-  embed_queue_depth: Option<usize>,
-  embed_errors: Option<Vec<SyncErrorItem>>,
-  read_errors: Option<Vec<SyncErrorItem>>,
+    upserted: usize,
+    embedded_images: Option<usize>,
+    embedded_success: Option<usize>,
+    embedded_failed: Option<usize>,
+    requested_embeds: Option<usize>,
+    queued_embeds: Option<usize>,
+    embed_queue_depth: Option<usize>,
+    embed_errors: Option<Vec<SyncErrorItem>>,
+    read_errors: Option<Vec<SyncErrorItem>>,
 }
 
 #[tauri::command]
@@ -279,19 +279,19 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<SyncResu
         return Err("server_url empty".into());
     }
     let trimmed = server_url.trim_end_matches('/');
-  if payload.items.is_empty() {
-    return Ok(SyncResult {
-      upserted: 0,
-      embedded_images: Some(0),
-      embedded_success: Some(0),
-      embedded_failed: Some(0),
-      requested_embeds: Some(0),
-      queued_embeds: Some(0),
-      embed_queue_depth: Some(0),
-      embed_errors: Some(Vec::new()),
-      read_errors: Some(Vec::new()),
-    });
-  }
+    if payload.items.is_empty() {
+        return Ok(SyncResult {
+            upserted: 0,
+            embedded_images: Some(0),
+            embedded_success: Some(0),
+            embedded_failed: Some(0),
+            requested_embeds: Some(0),
+            queued_embeds: Some(0),
+            embed_queue_depth: Some(0),
+            embed_errors: Some(Vec::new()),
+            read_errors: Some(Vec::new()),
+        });
+    }
 
     let url = format!("{}/sync/stream", trimmed);
     let client = reqwest::Client::new();
