@@ -74,9 +74,26 @@ class ImageEmbedJSON(BaseModel):
 class ImageBatchRequest(BaseModel):
     images_b64: List[str]
 
+class EmbeddingDiagnostics(BaseModel):
+    dim: int
+    norm: float
+    tiles: Optional[int] = None
+    crops: Optional[int] = None
+    scales: Optional[int] = None
+    prep_ms: Optional[float] = None
+    transfer_ms: Optional[float] = None
+    infer_ms: Optional[float] = None
+    total_ms: Optional[float] = None
+    token_count: Optional[int] = None
+    context_length: Optional[int] = None
+    tokenize_ms: Optional[float] = None
+    elapsed: Optional[float] = None
+
+
 class ImageBatchResponse(BaseModel):
     vecs: List[List[float]]
     errors: List[Optional[str]]
+    diagnostics: List[Optional[EmbeddingDiagnostics]]
 
 @app.get("/healthz")
 def healthz():
@@ -131,10 +148,16 @@ def embed_text_endpoint(req: TextRequest):
         raise HTTPException(status_code=400, detail="text empty")
 
     try:
-        vec = models.embed_text(req.text)
+        vec, diag = models.embed_text(req.text, with_diagnostics=True)
         elapsed = time.perf_counter() - start_time
-        logger.info(f"[EMBED_TEXT] Successfully embedded text - dim={len(vec)}, elapsed={elapsed:.3f}s, norm={sum(x*x for x in vec)**0.5:.6f}")
-        return {"vec": vec}
+        logger.info(
+            "[EMBED_TEXT] Successfully embedded text - dim=%d, elapsed=%.3fs, norm=%.6f",
+            len(vec),
+            elapsed,
+            diag.get("norm", 0.0),
+        )
+        diag_obj = EmbeddingDiagnostics(**{**diag, "elapsed": elapsed})
+        return {"vec": vec, "diag": diag}
     except Exception as e:
         elapsed = time.perf_counter() - start_time
         logger.error(f"[EMBED_TEXT] Failed to embed text - error={str(e)}, elapsed={elapsed:.3f}s")
@@ -196,10 +219,17 @@ async def embed_image(request: Request, file: UploadFile | None = File(None)):
             raise HTTPException(status_code=400, detail="provide bytes_b64 or uri")
 
     try:
-        vec = models.embed_image_bytes(data_bytes)
+        vec, diag = models.embed_image_bytes(data_bytes, with_diagnostics=True)
         elapsed = time.perf_counter() - start_time
-        logger.info(f"[EMBED_IMAGE] Successfully embedded image - {source_info}, dim={len(vec)}, elapsed={elapsed:.3f}s, norm={sum(x*x for x in vec)**0.5:.6f}")
-        return {"vec": vec}
+        logger.info(
+            "[EMBED_IMAGE] Successfully embedded image - %s, dim=%d, elapsed=%.3fs, norm=%.6f",
+            source_info,
+            len(vec),
+            elapsed,
+            diag.get("norm", 0.0),
+        )
+        diag_obj = EmbeddingDiagnostics(**{**diag, "elapsed": elapsed})
+        return {"vec": vec, "diag": diag}
     except Exception as e:
         elapsed = time.perf_counter() - start_time
         logger.error(f"[EMBED_IMAGE] Failed to embed image - {source_info}, error={str(e)}, elapsed={elapsed:.3f}s")
@@ -210,17 +240,21 @@ async def embed_image(request: Request, file: UploadFile | None = File(None)):
 async def embed_image_batch(req: ImageBatchRequest):
     vecs: List[List[float]] = []
     errors: List[Optional[str]] = []
+    diagnostics: List[Optional[EmbeddingDiagnostics]] = []
     for b64 in req.images_b64:
         if not b64:
             vecs.append([])
             errors.append("empty b64")
+            diagnostics.append(None)
             continue
         try:
             data_bytes = base64.b64decode(b64)
-            v = models.embed_image_bytes(data_bytes)
+            v, diag = models.embed_image_bytes(data_bytes, with_diagnostics=True)
             vecs.append(v)
             errors.append(None)
+            diagnostics.append(EmbeddingDiagnostics(**diag))
         except Exception as e:  # pragma: no cover
             vecs.append([])
             errors.append(str(e))
-    return ImageBatchResponse(vecs=vecs, errors=errors)
+            diagnostics.append(None)
+    return ImageBatchResponse(vecs=vecs, errors=errors, diagnostics=diagnostics)

@@ -170,15 +170,32 @@ struct SyncPayloadItem {
 #[derive(serde::Deserialize, serde::Serialize)]
 struct SyncPayload { items: Vec<SyncPayloadItem> }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+struct SyncErrorItem {
+  uri: String,
+  error: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+struct SyncResult {
+  upserted: usize,
+  embedded_images: Option<usize>,
+  embedded_success: Option<usize>,
+  embedded_failed: Option<usize>,
+  requested_embeds: Option<usize>,
+  embed_errors: Option<Vec<SyncErrorItem>>,
+  read_errors: Option<Vec<SyncErrorItem>>,
+}
+
 #[tauri::command]
-async fn sync_index(server_url: String, payload: SyncPayload) -> Result<usize, String> {
+async fn sync_index(server_url: String, payload: SyncPayload) -> Result<SyncResult, String> {
   if server_url.is_empty() { return Err("server_url empty".into()); }
   let url = format!("{}/sync", server_url.trim_end_matches('/'));
   let client = reqwest::Client::new();
   let resp = client.post(url).json(&payload).send().await.map_err(|e| e.to_string())?;
   if !resp.status().is_success() { return Err(format!("sync failed: {}", resp.status())); }
-  let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-  Ok(v.get("upserted").and_then(|x| x.as_u64()).unwrap_or(0) as usize)
+  let result = resp.json::<SyncResult>().await.map_err(|e| e.to_string())?;
+  Ok(result)
 }
 
 #[tauri::command]

@@ -1,10 +1,11 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.transforms import functional as TF
 from PIL import Image
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import contextlib
 import io
 import logging
@@ -291,7 +292,7 @@ def _project_embedding(vec: torch.Tensor) -> torch.Tensor:
     return F.normalize(vec, dim=-1)
 
 
-def embed_image_bytes(image_bytes: bytes) -> List[float]:
+def embed_image_bytes(image_bytes: bytes, *, with_diagnostics: bool = False) -> Union[List[float], Tuple[List[float], Dict[str, Any]]]:
     start = time.perf_counter()
     load_model()
     logger.debug(
@@ -403,7 +404,10 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
                 produced += 1
 
             logger.debug(
-                "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f produced=%d", tile_idx, scale_factor, produced
+                "[MODEL_EMBED_IMAGE] tile=%d scale=%.2f produced=%d",
+                tile_idx,
+                scale_factor,
+                produced,
             )
 
     if not crops:
@@ -421,7 +425,7 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
                 if AMP_DTYPE is not None:
                     batch = batch.to(dtype=AMP_DTYPE, non_blocking=True)
             torch.cuda.current_stream().wait_stream(transfer_stream)
-            transfer_ms = (time.perf_counter() - transfer_start) * 1000.0
+            transfer_ms += (time.perf_counter() - transfer_start) * 1000.0
         elif AMP_DTYPE is not None and batch.dtype != AMP_DTYPE:
             batch = batch.to(dtype=AMP_DTYPE)
     else:
@@ -449,6 +453,20 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
     total_elapsed = (time.perf_counter() - start) * 1000.0
 
     result = emb.cpu().tolist()
+    norm = math.sqrt(sum(x * x for x in result))
+    if not math.isfinite(norm) or norm < 1e-6:
+        raise ValueError(f"invalid embedding norm: {norm}")
+    diagnostics: Dict[str, Any] = {
+        "dim": len(result),
+        "norm": norm,
+        "tiles": len(tiles),
+        "crops": len(crops),
+        "scales": len(IMAGE_SCALE_FACTORS),
+        "prep_ms": prep_elapsed,
+        "transfer_ms": transfer_ms,
+        "infer_ms": infer_elapsed,
+        "total_ms": total_elapsed,
+    }
     logger.info(
         "[MODEL_EMBED_IMAGE] success crops=%d tiles=%d scales=%d prep_ms=%.2f h2d_ms=%.2f infer_ms=%.2f total_ms=%.2f "
         "norm=%.6f device=%s gpu=%s",
@@ -459,14 +477,16 @@ def embed_image_bytes(image_bytes: bytes) -> List[float]:
         transfer_ms,
         infer_elapsed,
         total_elapsed,
-        sum(x * x for x in result) ** 0.5,
+        norm,
         VISION_DEVICE,
         _format_gpu_state(),
     )
+    if with_diagnostics:
+        return result, diagnostics
     return result
 
 
-def embed_text(text: str) -> List[float]:
+def embed_text(text: str, *, with_diagnostics: bool = False) -> Union[List[float], Tuple[List[float], Dict[str, Any]]]:
     start = time.perf_counter()
     load_model()
     text = (text or "").strip()
@@ -478,13 +498,25 @@ def embed_text(text: str) -> List[float]:
         VISION_DEVICE,
     )
 
+    ctx_len = getattr(TEXT_MODEL, "context_length", 77)
     if not text:
         if TARGET_DIM is None:
             raise RuntimeError("model not initialised")
         logger.debug("[MODEL_EMBED_TEXT] empty_text -> zero_vector")
-        return [0.0] * TARGET_DIM
+        result = [0.0] * TARGET_DIM
+        if with_diagnostics:
+            return result, {
+                "dim": TARGET_DIM,
+                "norm": 0.0,
+                "token_count": 0,
+                "context_length": ctx_len,
+                "tokenize_ms": 0.0,
+                "transfer_ms": 0.0,
+                "infer_ms": 0.0,
+                "total_ms": 0.0,
+            }
+        return result
 
-    ctx_len = getattr(TEXT_MODEL, "context_length", 77)
     if VISION_DEVICE and VISION_DEVICE.startswith("cuda"):
         torch.cuda.synchronize()
     tokenize_start = time.perf_counter()
@@ -561,6 +593,9 @@ def embed_text(text: str) -> List[float]:
     v = _project_embedding(v)
     total_ms = (time.perf_counter() - start) * 1000.0
     result = v.cpu().tolist()
+    norm = math.sqrt(sum(x * x for x in result))
+    if not math.isfinite(norm):
+        raise ValueError(f"invalid embedding norm: {norm}")
     logger.info(
         "[MODEL_EMBED_TEXT] success tokens=%s tokenize_ms=%.2f h2d_ms=%.2f infer_ms=%.2f total_ms=%.2f norm=%.6f device=%s gpu=%s",
         getattr(tokens, "shape", None),
@@ -568,8 +603,26 @@ def embed_text(text: str) -> List[float]:
         transfer_ms,
         infer_ms,
         total_ms,
-        sum(x * x for x in result) ** 0.5,
+        norm,
         VISION_DEVICE,
         _format_gpu_state(),
     )
+    if with_diagnostics:
+        token_count = 0
+        if isinstance(tokens, torch.Tensor):
+            if tokens.ndim == 1:
+                token_count = int(tokens.shape[0])
+            elif tokens.ndim >= 2:
+                token_count = int(tokens.shape[-1])
+        diagnostics = {
+            "dim": len(result),
+            "norm": norm,
+            "token_count": token_count,
+            "context_length": ctx_len,
+            "tokenize_ms": tokenize_ms,
+            "transfer_ms": transfer_ms,
+            "infer_ms": infer_ms,
+            "total_ms": total_ms,
+        }
+        return result, diagnostics
     return result

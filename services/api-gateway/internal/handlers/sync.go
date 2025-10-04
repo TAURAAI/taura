@@ -34,6 +34,11 @@ type SyncRequest struct {
 	Items []MediaUpsert `json:"items"`
 }
 
+type failureDetail struct {
+	URI   string `json:"uri"`
+	Error string `json:"error"`
+}
+
 var syncVersionOnce sync.Once
 
 func PostSync(c *fiber.Ctx) error {
@@ -46,13 +51,17 @@ func PostSync(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
 	}
 
-	syncVersionOnce.Do(func(){ log.Printf("/sync handler revision=3 (conflict-safe CTE upserts)") })
+	syncVersionOnce.Do(func() { log.Printf("/sync handler revision=3 (conflict-safe CTE upserts)") })
 
 	ctx := context.Background()
 
 	resolveUser := func(raw string) (string, bool) {
-		if raw == "" { return "", false }
-		if _, err := uuid.Parse(raw); err == nil { return raw, true }
+		if raw == "" {
+			return "", false
+		}
+		if _, err := uuid.Parse(raw); err == nil {
+			return raw, true
+		}
 		var id string
 		cte := `WITH ins AS (
 			INSERT INTO users (email) VALUES ($1)
@@ -75,6 +84,7 @@ func PostSync(c *fiber.Ctx) error {
 		bytes   []byte
 	}
 	var pending []pendingImage
+	var readFailures []failureDetail
 	// Single upsert statement always returning id + inserted flag.
 	mediaUpsertStmt := `INSERT INTO media (user_id, modality, uri, ts, album, source, lat, lon)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -87,10 +97,19 @@ func PostSync(c *fiber.Ctx) error {
 		RETURNING id, (xmax = 0) AS inserted` // xmax=0 heuristic: true for freshly inserted row
 
 	for _, item := range req.Items {
-		if item.UserID == "" || item.URI == "" || item.Modality == "" { continue }
-		userUUID, ok := resolveUser(item.UserID); if !ok { continue }
+		if item.UserID == "" || item.URI == "" || item.Modality == "" {
+			continue
+		}
+		userUUID, ok := resolveUser(item.UserID)
+		if !ok {
+			continue
+		}
 		var tsPtr *time.Time
-		if item.TS != nil && *item.TS != "" { if t, err := time.Parse(time.RFC3339, *item.TS); err == nil { tsPtr = &t } }
+		if item.TS != nil && *item.TS != "" {
+			if t, err := time.Parse(time.RFC3339, *item.TS); err == nil {
+				tsPtr = &t
+			}
+		}
 		var mediaID string
 		var inserted bool
 		err := database.Pool.QueryRow(ctx, mediaUpsertStmt, userUUID, item.Modality, item.URI, tsPtr, item.Album, item.Source, item.Lat, item.Lon).Scan(&mediaID, &inserted)
@@ -98,7 +117,9 @@ func PostSync(c *fiber.Ctx) error {
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) {
 				if pgErr.Code == "23505" { // duplicate (should be handled by ON CONFLICT) silently ignore
-					if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2`, userUUID, item.URI).Scan(&mediaID); selErr != nil { continue }
+					if selErr := database.Pool.QueryRow(ctx, `SELECT id FROM media WHERE user_id=$1 AND uri=$2`, userUUID, item.URI).Scan(&mediaID); selErr != nil {
+						continue
+					}
 					inserted = false
 					// no log noise
 					goto afterUpsert
@@ -109,13 +130,19 @@ func PostSync(c *fiber.Ctx) error {
 			continue
 		}
 	afterUpsert:
-		if inserted { upserted++ }
+		if inserted {
+			upserted++
+		}
 		lower := strings.ToLower(item.Modality)
 		if lower == "image" || lower == "pdf_page" {
 			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
 				bytes, readErr := os.ReadFile(item.URI)
-				if readErr != nil { /* silent */ } else if len(bytes) > 0 {
+				if readErr != nil {
+					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: readErr.Error()})
+				} else if len(bytes) > 0 {
 					pending = append(pending, pendingImage{mediaID: mediaID, uri: item.URI, bytes: bytes})
+				} else {
+					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: "file empty"})
 				}
 			}
 		}
@@ -123,6 +150,9 @@ func PostSync(c *fiber.Ctx) error {
 
 	// Batch embed after commit to reduce DB lock time
 	const chunk = 16
+	embedSuccess := 0
+	embedFailed := 0
+	var embedFailures []failureDetail
 	for i := 0; i < len(pending); i += chunk {
 		end := i + chunk
 		if end > len(pending) {
@@ -130,7 +160,9 @@ func PostSync(c *fiber.Ctx) error {
 		}
 		batch := pending[i:end]
 		batchBytes := 0
-		for _, p := range batch { batchBytes += len(p.bytes) }
+		for _, p := range batch {
+			batchBytes += len(p.bytes)
+		}
 		startBatch := time.Now()
 		payload := make([][]byte, len(batch))
 		for j, p := range batch {
@@ -140,6 +172,10 @@ func PostSync(c *fiber.Ctx) error {
 		elapsed := time.Since(startBatch)
 		if errBatch != nil {
 			log.Printf("image batch embed error start=%d count=%d bytes=%d elapsed=%dms err=%v", i, len(batch), batchBytes, elapsed.Milliseconds(), errBatch)
+			for _, p := range batch {
+				embedFailed++
+				embedFailures = append(embedFailures, failureDetail{URI: p.uri, Error: errBatch.Error()})
+			}
 			continue
 		}
 		log.Printf("image batch embed ok start=%d count=%d bytes=%d elapsed=%dms", i, len(batch), batchBytes, elapsed.Milliseconds())
@@ -147,9 +183,14 @@ func PostSync(c *fiber.Ctx) error {
 			if len(vec) == 0 {
 				if errs != nil && errs[j] != "" {
 					log.Printf("embed image failed uri=%s err=%s", batch[j].uri, errs[j])
+					embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: errs[j]})
+				} else {
+					embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: "empty embedding"})
 				}
+				embedFailed++
 				continue
 			}
+			embedSuccess++
 			parts := make([]string, len(vec))
 			for k, f := range vec {
 				parts[k] = fmt.Sprintf("%.9f", f)
@@ -158,9 +199,20 @@ func PostSync(c *fiber.Ctx) error {
 			if _, insErr := database.Pool.Exec(ctx, `INSERT INTO media_vecs (media_id, embedding) VALUES ($1, $2::vector)
 				ON CONFLICT (media_id) DO UPDATE SET embedding=EXCLUDED.embedding`, batch[j].mediaID, vectorLiteral); insErr != nil {
 				log.Printf("media_vecs upsert error media_id=%s err=%v", batch[j].mediaID, insErr)
+				embedFailures = append(embedFailures, failureDetail{URI: batch[j].uri, Error: insErr.Error()})
+				embedFailed++
+				embedSuccess--
 			}
 		}
 	}
 
-	return c.JSON(fiber.Map{"upserted": upserted, "embedded_images": len(pending)})
+	return c.JSON(fiber.Map{
+		"upserted":         upserted,
+		"embedded_images":  embedSuccess,
+		"embedded_success": embedSuccess,
+		"embedded_failed":  embedFailed,
+		"embed_errors":     embedFailures,
+		"read_errors":      readFailures,
+		"requested_embeds": len(pending),
+	})
 }

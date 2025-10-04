@@ -78,6 +78,8 @@ function SettingsApp() {
   const scanIndeterminate = idx.scan && idx.scan.total === 0 && idx.phase === 'scanning'
   const scanPct = !scanIndeterminate && idx.scan && idx.scan.total > 0 ? Math.min(100, (idx.scan.processed / idx.scan.total) * 100) : 0
   const throttleMs = Number(localStorage.getItem('taura.scan.throttle.ms') || '0')
+  const lastUpload = idx.lastUpload
+  const uploadHasFailures = !!lastUpload && (lastUpload.embeddedFailed > 0 || lastUpload.readErrors.length > 0)
 
   async function updateThrottle(v: number) {
     localStorage.setItem('taura.scan.throttle.ms', String(v))
@@ -132,6 +134,27 @@ function SettingsApp() {
             {idx.lastScanTime && <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Last {new Date(idx.lastScanTime).toLocaleTimeString()}</span>}
             <span className="px-2 py-1 rounded bg-white/5 border border-white/10">Throttle {throttleMs}ms</span>
           </div>
+
+          {lastUpload && (
+            <div className={`text-xs rounded-md border px-3 py-2 ${uploadHasFailures ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'}`}>
+              <div className="font-medium">Last sync {new Date(lastUpload.at).toLocaleTimeString()} • {lastUpload.embeddedSuccess}/{lastUpload.requested} embedded</div>
+              {uploadHasFailures ? (
+                <div className="mt-1 space-y-1">
+                  {lastUpload.embedErrors.slice(0, 3).map((err, issueIdx) => (
+                    <div key={`embed-${issueIdx}`} className="truncate">⚠️ {err.uri}: {err.error}</div>
+                  ))}
+                  {lastUpload.readErrors.slice(0, 2).map((err, issueIdx) => (
+                    <div key={`read-${issueIdx}`} className="truncate">📁 {err.uri}: {err.error}</div>
+                  ))}
+                  {(lastUpload.embedErrors.length + lastUpload.readErrors.length) > 5 && (
+                    <div className="text-[11px] opacity-80">{lastUpload.embedErrors.length + lastUpload.readErrors.length - 5} more issues…</div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-1 opacity-80">All items embedded successfully.</div>
+              )}
+            </div>
+          )}
 
           <div className="flex flex-col gap-3">
             {(idx.phase === 'scanning') && (

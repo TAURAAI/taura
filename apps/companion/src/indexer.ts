@@ -5,6 +5,21 @@ import { getConfig, subscribeConfig } from './state/config'
 // ---- Types ----
 export type IndexerPhase = 'idle' | 'scanning' | 'uploading' | 'error'
 
+export interface SyncErrorItem {
+  uri: string
+  error: string
+}
+
+export interface SyncResult {
+  upserted: number
+  embedded_images?: number
+  embedded_success?: number
+  embedded_failed?: number
+  requested_embeds?: number
+  embed_errors?: SyncErrorItem[]
+  read_errors?: SyncErrorItem[]
+}
+
 export interface ScanProgressEvent {
   path: string
   processed: number
@@ -30,6 +45,15 @@ export interface IndexerState {
     sent: number
     batches: number
   } | null
+  lastUpload?: {
+    at: number
+    upserted: number
+    requested: number
+    embeddedSuccess: number
+    embeddedFailed: number
+    embedErrors: SyncErrorItem[]
+    readErrors: SyncErrorItem[]
+  }
   lastScanTime?: string
   error?: string
 }
@@ -177,12 +201,24 @@ export async function stopScan() {
 async function batchUpload(items: any[]) {
   if (!items.length) return
   uploading = true
-  indexerStore.patchNested(s => { s.phase = 'uploading'; s.upload = { queued: items.length, sent: 0, batches: 0 } })
+  indexerStore.patchNested(s => {
+    s.phase = 'uploading'
+    s.upload = { queued: items.length, sent: 0, batches: 0 }
+    s.lastUpload = undefined
+  })
   const serverUrl = currentConfig.serverUrl.replace(/\/$/, '')
+  const aggregate = {
+    upserted: 0,
+    requested: 0,
+    embeddedSuccess: 0,
+    embeddedFailed: 0,
+    embedErrors: [] as SyncErrorItem[],
+    readErrors: [] as SyncErrorItem[],
+  }
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE)
     try {
-      await invoke('sync_index', { serverUrl, payload: { items: batch.map(m => ({
+      const result = await invoke<SyncResult>('sync_index', { serverUrl, payload: { items: batch.map(m => ({
         user_id: currentConfig.userId,
         modality: m.modality,
         uri: m.path,
@@ -190,13 +226,39 @@ async function batchUpload(items: any[]) {
         lat: m.lat,
         lon: m.lon
       })) } })
+  aggregate.upserted += result.upserted ?? 0
+      aggregate.requested += result.requested_embeds ?? batch.length
+      const successCount = result.embedded_success ?? result.embedded_images ?? 0
+      aggregate.embeddedSuccess += successCount
+      aggregate.embeddedFailed += result.embedded_failed ?? 0
+      if (Array.isArray(result.embed_errors)) aggregate.embedErrors.push(...result.embed_errors)
+      if (Array.isArray(result.read_errors)) aggregate.readErrors.push(...result.read_errors)
     } catch (e) {
       console.warn('batch upload failed', e)
+      aggregate.requested += batch.length
+      aggregate.embeddedFailed += batch.length
+      aggregate.embedErrors.push({ uri: 'batch', error: String(e) })
     }
     indexerStore.patchNested(s => { if (s.upload) { s.upload.sent += batch.length; s.upload.batches += 1 } })
   }
   uploading = false
-  indexerStore.patchNested(s => { if (s.phase === 'uploading') s.phase = 'idle'; })
+  indexerStore.patchNested(s => {
+    if (s.phase === 'uploading') s.phase = 'idle'
+    s.lastUpload = {
+      at: Date.now(),
+      upserted: aggregate.upserted,
+      requested: aggregate.requested,
+      embeddedSuccess: aggregate.embeddedSuccess,
+      embeddedFailed: aggregate.embeddedFailed,
+      embedErrors: aggregate.embedErrors,
+      readErrors: aggregate.readErrors,
+    }
+    if (aggregate.embeddedFailed > 0 || aggregate.readErrors.length > 0) {
+      s.error = `Sync incomplete: ${aggregate.embeddedFailed} embed failures, ${aggregate.readErrors.length} read errors`
+    } else if (s.error && s.error.startsWith('Sync incomplete')) {
+      s.error = undefined
+    }
+  })
 }
 
 export function useIndexer(selector: (s: IndexerState) => any) {
