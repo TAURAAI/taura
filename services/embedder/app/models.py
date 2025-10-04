@@ -505,6 +505,44 @@ def embed_text(text: str) -> List[float]:
             tokens = torch.tensor(tokens, device=VISION_DEVICE, dtype=torch.long)
         tokenize_ms = (time.perf_counter() - tokenize_start) * 1000.0
 
+        # Defensive validation: ensure token indices are integers, non-negative
+        # and within the tokenizer/model vocabulary. Device-side CUDA asserts
+        # (indexSelectLargeIndex) often happen when an index >= vocab_size is
+        # passed to an embedding lookup. Raising here gives a clear Python
+        # exception and avoids a confusing device assert.
+        try:
+            # ensure integer dtype
+            if isinstance(tokens, torch.Tensor):
+                tokens = tokens.long()
+            # compute min/max only for tensor inputs
+            if isinstance(tokens, torch.Tensor):
+                try:
+                    min_idx = int(tokens.min().item())
+                    max_idx = int(tokens.max().item())
+                except Exception:
+                    min_idx = None
+                    max_idx = None
+
+                if min_idx is not None and min_idx < 0:
+                    raise RuntimeError(f"token index negative: min={min_idx}")
+
+                # try to discover vocab size from model token embedding
+                vocab_size = None
+                te = getattr(TEXT_MODEL, "token_embedding", None)
+                if te is not None:
+                    if hasattr(te, "num_embeddings"):
+                        vocab_size = int(te.num_embeddings)
+                    elif hasattr(te, "weight"):
+                        vocab_size = int(te.weight.shape[0])
+
+                if vocab_size is not None and max_idx is not None and max_idx >= vocab_size:
+                    raise RuntimeError(f"token index {max_idx} >= vocab size {vocab_size}")
+        except Exception:
+            # log full context and re-raise to surface a clear error instead of a
+            # device-side CUDA assert. The caller (FastAPI) will return a 500.
+            logger.exception("[MODEL_EMBED_TEXT] token validation failed; tokens=%s", getattr(tokens, 'shape', tokens))
+            raise
+
         amp_ctx = (
             torch.autocast("cuda", dtype=AMP_DTYPE)  # type: ignore[arg-type]
             if AMP_DTYPE is not None and VISION_DEVICE and VISION_DEVICE.startswith("cuda")

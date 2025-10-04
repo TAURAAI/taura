@@ -89,15 +89,34 @@ def warmup():
     from PIL import Image
     import io as _io
     start = time.perf_counter()
-    models.load_model()
-    # run text warmup
-    _ = models.embed_text("warmup")
+    errors = []
+    try:
+        models.load_model()
+    except Exception as e:  # pragma: no cover
+        logger.exception("[WARMUP] model load failed: %s", e)
+        errors.append(f"load_model: {e}")
+
+    # run text warmup (defensive: catch to avoid a soft-failure bringing down warmup)
+    try:
+        _ = models.embed_text("warmup")
+    except Exception as e:  # pragma: no cover
+        logger.exception("[WARMUP] text warmup failed: %s", e)
+        errors.append(f"embed_text: {e}")
+
     # create small random RGB image (32x32) and embed
-    img = Image.new("RGB", (32, 32), (random.randint(0,255), random.randint(0,255), random.randint(0,255)))
-    buf = _io.BytesIO()
-    img.save(buf, format="PNG")
-    _ = models.embed_image_bytes(buf.getvalue())
+    try:
+        img = Image.new("RGB", (32, 32), (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+        buf = _io.BytesIO()
+        img.save(buf, format="PNG")
+        _ = models.embed_image_bytes(buf.getvalue())
+    except Exception as e:  # pragma: no cover
+        logger.exception("[WARMUP] image warmup failed: %s", e)
+        errors.append(f"embed_image: {e}")
+
     elapsed = time.perf_counter() - start
+    if errors:
+        logger.warning("[WARMUP] completed with errors in %.3fs: %s", elapsed, errors)
+        return {"status": "partial", "elapsed": elapsed, "errors": errors}
     logger.info(f"[WARMUP] completed in {elapsed:.3f}s")
     return {"status": "ok", "elapsed": elapsed}
 
