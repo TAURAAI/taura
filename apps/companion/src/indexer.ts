@@ -1,5 +1,7 @@
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
+import { readFile } from '@tauri-apps/plugin-fs'
+import { useCallback, useSyncExternalStore } from 'react'
 import { getConfig, subscribeConfig } from './state/config'
 
 // ---- Types ----
@@ -16,6 +18,8 @@ export interface SyncResult {
   embedded_success?: number
   embedded_failed?: number
   requested_embeds?: number
+  queued_embeds?: number
+  embed_queue_depth?: number
   embed_errors?: SyncErrorItem[]
   read_errors?: SyncErrorItem[]
 }
@@ -87,6 +91,7 @@ window.__TAURA_INDEXER = indexerStore
 const SCAN_INTERVAL_MIN = Number(localStorage.getItem('taura.scan.interval.min') || '30') // minutes
 const DEFAULT_THROTTLE_MS = 40 // built-in gentle default
 const BATCH_SIZE = 96
+const MAX_INLINE_FILE_BYTES = 8 * 1024 * 1024 // 8MB safety to avoid ballooning JSON
 const RESCAN_ON_START = true
 
 let scanning = false
@@ -198,6 +203,17 @@ export async function stopScan() {
   try { await invoke('stop_scan') } catch {}
 }
 
+function toBase64(data: Uint8Array): string {
+  if (data.length === 0) return ''
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < data.length; i += chunkSize) {
+    const chunk = data.subarray(i, Math.min(i + chunkSize, data.length))
+    binary += String.fromCharCode(...chunk)
+  }
+  return btoa(binary)
+}
+
 async function batchUpload(items: any[]) {
   if (!items.length) return
   uploading = true
@@ -217,27 +233,50 @@ async function batchUpload(items: any[]) {
   }
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     const batch = items.slice(i, i + BATCH_SIZE)
-    try {
-      const result = await invoke<SyncResult>('sync_index', { serverUrl, payload: { items: batch.map(m => ({
+    const localReadErrors: SyncErrorItem[] = []
+    const shouldInlineBytes = currentConfig.privacyMode === 'hybrid'
+    const payloadItems = []
+    for (const m of batch) {
+      const base: any = {
         user_id: currentConfig.userId,
         modality: m.modality,
         uri: m.path,
         ts: m.modified,
         lat: m.lat,
-        lon: m.lon
-      })) } })
-  aggregate.upserted += result.upserted ?? 0
-      aggregate.requested += result.requested_embeds ?? batch.length
+        lon: m.lon,
+      }
+      if (shouldInlineBytes && typeof m.path === 'string' && m.path && (m.modality === 'image' || m.modality === 'pdf_page')) {
+        try {
+          const bytes = await readFile(m.path)
+          if (bytes.length === 0) {
+            localReadErrors.push({ uri: m.path, error: 'file empty' })
+          } else if (bytes.length > MAX_INLINE_FILE_BYTES) {
+            localReadErrors.push({ uri: m.path, error: `file too large (${(bytes.length / (1024 * 1024)).toFixed(1)}MB)` })
+          } else {
+            base.bytes_b64 = toBase64(bytes)
+          }
+        } catch (err: any) {
+          localReadErrors.push({ uri: m.path, error: err?.message || 'read failed' })
+        }
+      }
+      payloadItems.push(base)
+    }
+    try {
+      const result = await invoke<SyncResult>('sync_index', { serverUrl, payload: { items: payloadItems } })
+      aggregate.upserted += result.upserted ?? 0
+      aggregate.requested += result.requested_embeds ?? payloadItems.length
       const successCount = result.embedded_success ?? result.embedded_images ?? 0
       aggregate.embeddedSuccess += successCount
       aggregate.embeddedFailed += result.embedded_failed ?? 0
       if (Array.isArray(result.embed_errors)) aggregate.embedErrors.push(...result.embed_errors)
       if (Array.isArray(result.read_errors)) aggregate.readErrors.push(...result.read_errors)
+      if (localReadErrors.length) aggregate.readErrors.push(...localReadErrors)
     } catch (e) {
       console.warn('batch upload failed', e)
       aggregate.requested += batch.length
       aggregate.embeddedFailed += batch.length
       aggregate.embedErrors.push({ uri: 'batch', error: String(e) })
+      if (localReadErrors.length) aggregate.readErrors.push(...localReadErrors)
     }
     indexerStore.patchNested(s => { if (s.upload) { s.upload.sent += batch.length; s.upload.batches += 1 } })
   }
@@ -261,15 +300,11 @@ async function batchUpload(items: any[]) {
   })
 }
 
-export function useIndexer(selector: (s: IndexerState) => any) {
-  const [snap, setSnap] = (window as any).React?.useState(() => selector(indexerStore.get())) || [selector(indexerStore.get()), () => {}]
-  useEffectCompat(() => indexerStore.subscribe(s => setSnap(selector(s))), [selector])
-  return snap
-}
-
-function useEffectCompat(fn: () => any, deps: any[]) {
-  // dynamic import to avoid circular requiring React here if tests stub
-  // @ts-ignore
-  const React = window.React || require('react')
-  React.useEffect(fn, deps)
+export function useIndexer<T>(selector: (s: IndexerState) => T): T {
+  const getSnapshot = useCallback(() => selector(indexerStore.get()), [selector])
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => indexerStore.subscribe((_state) => onStoreChange()),
+    [],
+  )
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }

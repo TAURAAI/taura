@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"github.com/TAURAAI/taura/api-gateway/internal/db"
 	"github.com/TAURAAI/taura/api-gateway/internal/embed"
@@ -27,6 +28,7 @@ type MediaUpsert struct {
 	Lon      *float64 `json:"lon"`
 	Album    *string  `json:"album"`
 	Source   *string  `json:"source"`
+	BytesB64 *string  `json:"bytes_b64,omitempty"`
 }
 
 type SyncRequest struct {
@@ -131,7 +133,17 @@ func PostSync(c *fiber.Ctx) error {
 		}
 		lower := strings.ToLower(item.Modality)
 		if lower == "image" || lower == "pdf_page" {
-			if strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\") {
+			var inline []byte
+			if item.BytesB64 != nil && *item.BytesB64 != "" {
+				decoded, err := base64.StdEncoding.DecodeString(*item.BytesB64)
+				if err != nil {
+					embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: "decode inline bytes: " + err.Error()})
+					log.Printf("/sync inline decode failure uri=%s err=%v", item.URI, err)
+				} else {
+					inline = decoded
+				}
+			}
+			if len(inline) == 0 && (strings.HasPrefix(item.URI, "C:\\") || strings.HasPrefix(item.URI, "/") || strings.HasPrefix(item.URI, "\\\\")) {
 				bytes, readErr := os.ReadFile(item.URI)
 				if readErr != nil {
 					msg := readErr.Error()
@@ -139,20 +151,25 @@ func PostSync(c *fiber.Ctx) error {
 					log.Printf("/sync read failure uri=%s err=%s", item.URI, msg)
 					continue
 				}
-				if len(bytes) == 0 {
-					readFailures = append(readFailures, failureDetail{URI: item.URI, Error: "file empty"})
-					log.Printf("/sync read failure uri=%s err=file empty", item.URI)
-					continue
-				}
-				requestedEmbeds++
-				if err := embed.EnqueueImage(mediaID, item.URI, bytes); err != nil {
-					embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: err.Error()})
-					log.Printf("/sync enqueue failed uri=%s err=%s", item.URI, err)
-				} else {
-					queuedEmbeds++
-					queueDepthNow := embed.QueueDepth()
-					log.Printf("/sync enqueued uri=%s media_id=%s queue_depth=%d", item.URI, mediaID, queueDepthNow)
-				}
+				inline = bytes
+			}
+			if len(inline) == 0 {
+				continue
+			}
+			const maxInline = 25 * 1024 * 1024
+			if len(inline) > maxInline {
+				embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: "inline payload exceeds 25MB"})
+				log.Printf("/sync inline bytes too large uri=%s size=%d", item.URI, len(inline))
+				continue
+			}
+			requestedEmbeds++
+			if err := embed.EnqueueImage(mediaID, item.URI, inline); err != nil {
+				embedFailures = append(embedFailures, failureDetail{URI: item.URI, Error: err.Error()})
+				log.Printf("/sync enqueue failed uri=%s err=%s", item.URI, err)
+			} else {
+				queuedEmbeds++
+				queueDepthNow := embed.QueueDepth()
+				log.Printf("/sync enqueued uri=%s media_id=%s queue_depth=%d", item.URI, mediaID, queueDepthNow)
 			}
 		}
 	}

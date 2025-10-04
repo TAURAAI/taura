@@ -165,6 +165,7 @@ struct SyncPayloadItem {
   modality: String,
   uri: String,
   ts: Option<String>,
+  bytes_b64: Option<String>,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -270,6 +271,7 @@ pub fn run() {
 
   tauri::Builder::default()
     .plugin(shortcut_builder)
+    .plugin(tauri_plugin_fs::init())
     .invoke_handler(tauri::generate_handler![
       get_default_folder,
       pick_folder,
