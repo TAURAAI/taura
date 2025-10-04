@@ -36,6 +36,7 @@ export async function loadSession() {
   try {
     const sess = await invoke<Session | null>('get_session')
     setState({ session: sess, loading: false, error: null })
+    if (sess) scheduleRefresh(sess)
   } catch (e: any) {
     setState({ session: null, loading: false, error: String(e) })
   }
@@ -51,18 +52,24 @@ export async function loginWithGoogle(clientId: string) {
     if (secret) cfg.clientSecret = secret
     const res = await invoke<{ session: Session }>('google_auth_start', { cfg })
     setState({ session: res.session, loading: false })
-    // Persist / upsert user in gateway
+  scheduleRefresh(res.session)
+    // Integrated auth flow: send id_token to gateway for verify+upsert
     try {
       const base = getApiBase()
-      const email = res.session.email || res.session.sub || 'user'
-      const upRes = await fetch(`${base}/users/upsert`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, name: res.session.name, picture: res.session.picture }) })
-      if (upRes.ok) {
-        const data = await upRes.json() as { id: string }
-        // Update config with real user UUID so searches use it
-        updateConfig({ userId: data.id })
+      const id_token = res.session.id_token
+      if (id_token) {
+        const authResp = await fetch(`${base}/auth/google`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_token, email: res.session.email, name: res.session.name, picture: res.session.picture }) })
+        if (authResp.ok) {
+          const data = await authResp.json() as { user_id: string }
+            ;(data.user_id) && updateConfig({ userId: data.user_id })
+        } else {
+          console.warn('gateway auth/google failed', authResp.status)
+        }
+      } else {
+        console.warn('no id_token present to verify with gateway')
       }
     } catch (e) {
-      console.warn('user upsert failed', e)
+      console.warn('gateway auth/google error', e)
     }
     // Start indexer now that we have a real user (if not already started)
     try { initIndexer() } catch {}
@@ -76,6 +83,48 @@ export async function loginWithGoogle(clientId: string) {
 export async function logout() {
   try { await invoke('logout'); } catch {}
   setState({ session: null })
+  clearRefreshTimer()
+}
+
+// ----------------- Refresh Handling -----------------
+let refreshTimer: any = null
+
+function clearRefreshTimer() {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+function scheduleRefresh(sess: Session) {
+  clearRefreshTimer()
+  if (!sess.expires_at) return
+  const now = Date.now() / 1000
+  const lead = 45 // seconds before expiry to trigger ensure_fresh_session
+  let delaySec = sess.expires_at - now - lead
+  if (delaySec < 5) delaySec = 5
+  const delayMs = delaySec * 1000
+  refreshTimer = setTimeout(async () => {
+    try {
+      const updated = await invoke<Session>('ensure_fresh_session')
+      setState({ session: updated })
+      scheduleRefresh(updated)
+    } catch (e) {
+      console.warn('refresh failed', e)
+    }
+  }, delayMs)
+}
+
+export async function manualRefresh() {
+  try {
+    const updated = await invoke<Session>('refresh_session')
+    setState({ session: updated })
+    scheduleRefresh(updated)
+    return updated
+  } catch (e) {
+    setState({ error: String(e) })
+    throw e
+  }
 }
 
 // Auto-load session when imported (main.tsx will await loadSession before routing)

@@ -7,7 +7,7 @@ use tauri::{Emitter, Manager};
 use tokio::time::sleep; // for throttled scan yielding
 
 mod oauth;
-use oauth::{get_session, google_auth_start, logout};
+use oauth::{get_session, google_auth_start, logout, refresh_session, ensure_fresh_session};
 
 // Cancellation + config state
 static CANCEL_SCAN: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
@@ -423,7 +423,9 @@ pub fn run() {
             open_file,
             google_auth_start,
             get_session,
-            logout
+            logout,
+            refresh_session,
+            ensure_fresh_session
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

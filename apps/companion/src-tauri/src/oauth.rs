@@ -15,6 +15,9 @@ pub struct Session {
     pub name: Option<String>,
     pub picture: Option<String>,
     pub sub: Option<String>,
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 fn session_path(app: &tauri::AppHandle) -> PathBuf {
@@ -229,7 +232,87 @@ pub async fn google_auth_start(
         name: userinfo.name,
         picture: userinfo.picture,
         sub: userinfo.sub.clone(),
+        client_id: Some(client_id.to_string()),
+        client_secret: Some(client_secret.to_string()),
     };
     persist_session(&app, &session)?;
     Ok(AuthResult { session })
+}
+
+async fn do_refresh(app: &tauri::AppHandle, mut existing: Session) -> Result<Session, String> {
+    let refresh_token = existing
+        .refresh_token
+        .clone()
+        .ok_or_else(|| "no refresh_token present".to_string())?;
+    let client_id = existing
+        .client_id
+        .clone()
+        .ok_or_else(|| "client_id missing from session".to_string())?;
+    let client_secret = existing
+        .client_secret
+        .clone()
+        .ok_or_else(|| "client_secret missing from session (re-login required)".to_string())?;
+
+    #[derive(Deserialize)]
+    struct TokenResp {
+        access_token: String,
+        expires_in: Option<i64>,
+        refresh_token: Option<String>,
+        id_token: Option<String>,
+        token_type: Option<String>,
+        scope: Option<String>,
+    }
+
+    let params = [
+        ("client_id", client_id.as_str()),
+        ("client_secret", client_secret.as_str()),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token.as_str()),
+    ];
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://oauth2.googleapis.com/token")
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| format!("refresh token request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body_txt = resp.text().await.unwrap_or_default();
+        return Err(format!("refresh failed: {} body={}", status, body_txt));
+    }
+    let tok = resp
+        .json::<TokenResp>()
+        .await
+        .map_err(|e| format!("refresh decode failed: {e}"))?;
+
+    existing.access_token = tok.access_token;
+    if let Some(rt) = tok.refresh_token {
+        existing.refresh_token = Some(rt);
+    }
+    if let Some(idt) = tok.id_token { existing.id_token = Some(idt); }
+    existing.expires_at = tok
+        .expires_in
+        .map(|s| chrono::Utc::now().timestamp() + s - 30);
+
+    persist_session(app, &existing)?;
+    Ok(existing)
+}
+
+#[tauri::command]
+pub async fn refresh_session(app: tauri::AppHandle) -> Result<Session, String> {
+    let sess = load_session(&app).ok_or_else(|| "no session".to_string())?;
+    do_refresh(&app, sess).await
+}
+
+#[tauri::command]
+pub async fn ensure_fresh_session(app: tauri::AppHandle) -> Result<Session, String> {
+    let sess = load_session(&app).ok_or_else(|| "no session".to_string())?;
+    let now = chrono::Utc::now().timestamp();
+    if let Some(exp) = sess.expires_at {
+        if exp - now > 60 {
+            return Ok(sess);
+        }
+    }
+    do_refresh(&app, sess).await
 }
