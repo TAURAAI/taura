@@ -164,6 +164,41 @@ def load_model(device: str = None) -> None:
         except Exception:
             tokenizer = open_clip.get_tokenizer("siglip")
 
+        tokenizer_name = getattr(tokenizer, "__class__", type("anon", (), {})).__name__
+        logger.info("[MODEL_INIT] tokenizer=%s", tokenizer_name)
+
+        ctx_len = getattr(model, "context_length", 77)
+        try:
+            probe = tokenizer(["warmup"], context_length=ctx_len)  # type: ignore[arg-type]
+            if isinstance(probe, torch.Tensor):
+                probe_tensor = probe.to(dtype=torch.long, device="cpu")
+            else:
+                probe_tensor = torch.as_tensor(probe, dtype=torch.long)
+            min_probe = int(probe_tensor.min().item()) if probe_tensor.numel() else 0
+            max_probe = int(probe_tensor.max().item()) if probe_tensor.numel() else 0
+            if min_probe < 0:
+                raise RuntimeError(f"tokenizer produced negative index {min_probe}")
+
+            vocab_size = None
+            token_emb = getattr(model, "token_embedding", None)
+            if token_emb is not None:
+                if hasattr(token_emb, "num_embeddings"):
+                    vocab_size = int(token_emb.num_embeddings)
+                elif hasattr(token_emb, "weight"):
+                    vocab_size = int(token_emb.weight.shape[0])
+
+            if vocab_size is not None and max_probe >= vocab_size:
+                raise RuntimeError(
+                    "tokenizer indices exceed text tower vocabulary "
+                    f"(max={max_probe} >= vocab_size={vocab_size}). "
+                    "SigLIP uses a SentencePiece tokenizer; ensure the runtime has the "
+                    "`sentencepiece` package installed so the correct tokenizer loads."
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                f"failed to validate tokenizer '{tokenizer_name}': {exc}"
+            ) from exc
+
         # sizes / normalization from model's own preprocess
         model_image_size = getattr(getattr(model, "visual", None), "image_size", None)
         if isinstance(model_image_size, (tuple, list)):

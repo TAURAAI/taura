@@ -3,6 +3,7 @@ uvicorn
 torch
 torchvision
 open-clip-torch
+sentencepiece
 Pillow
 python-multipart
 pydantic
