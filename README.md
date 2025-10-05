@@ -1,59 +1,63 @@
 <div align="center">
 
-# Taura
+# Taura - Instant Visual Recall
 
-Instant recall of your personal media (photos, PDF pages, documents – more soon) directly from any text box or the global overlay. Type a memory like "paris eiffel 2019" and surface the exact photo or page in under 150 ms.
+Find any photo, PDF page, or document in milliseconds while you type.
 
-[![Companion Build & Release](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml/badge.svg)](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#license)
-
+[![Companion Build & Release](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml/badge.svg)](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml)
 </div>
 
-## ✨ Vision
-While you type, Taura suggests the right media instantly. Multi‑modal embeddings + time/place heuristics + lightweight UX (desktop overlay + mobile keyboards).
+## Table of Contents
+- [Overview](#overview)
+- [Current Status](#-current-status-oct-2025)
+- [Architecture Overview](#-architecture-overview)
+- [Repository Setup](#repository-setup-final-submission)
+- [Local Development](#-local-development)
+- [Deployment](#deployment-current-state)
+- [API](#-api-currently-implemented)
+- [Retrieval-Core SDK](#-retrieval-core-sdk-taura-airetrieval-core)
+- [Submissions](#5-submissions)
+- [License](#-license)
+
+## Overview
+Taura combines multi-modal embeddings with time and place heuristics to surface the exact media you are thinking of - directly from any text box (overlay) or the desktop companion. Taura also has a keyboard built in Kotlin for Android, which is still a WIP.
 
 ## 🔍 Current Status (Oct 2025)
 | Area | Status | Notes |
 |------|--------|-------|
-| Tauri Companion (scan + overlay + auth) | ✅ Working | Folder scan (recursive, throttled), NDJSON streaming sync, overlay window + global shortcut, Google OAuth flow (token verify via Google endpoint) |
-| Media Enumeration (images / pdf / video tags) | ✅ Basic | Classifies file extension to modality (image, pdf_page, video); EXIF, GPS, OCR not yet extracted |
-| Streaming Sync (/sync/stream) | ✅ Implemented | Per-item upsert + inline image bytes (<=25MB) + enqueue embedding batcher & queue depth metrics |
-| Embedding Queue + Batch Processor | ✅ Implemented | In‑process queue w/ retries, batch dispatch to /embed/image/batch, persistence to media_vecs |
-| Text Embedding Path | ✅ Working | /search calls embedder /embed/text with diagnostics & norm validation |
-| Image Embedding Path | ✅ Working | Inline base64 path (hybrid mode) → queue → batch embedding (multi‑scale + crops + panorama tiling) |
-| Search Endpoint (/search) | ✅ Working | Vector ANN (IVFFlat) + dynamic probes + keyword fallback + temporal (year/month) rerank & heuristic boosting |
-| Filters (modality, time range, geo, album) | ✅ Working | All parsed & applied server‑side in SQL clause construction |
-| Keyword Fallback | ✅ Working | When ANN low score / empty, falls back to LIKE over uri/album/source |
-| Rerank (light heuristic) | ✅ Working | Score bonuses for keyword/temporal hints; no cross‑encoder yet |
-| Postgres + pgvector infra | ✅ Working | Connection pool + ivfflat.probes tuning (env) |
-| Auth (Google token verification) | ✅ Basic | ID token verification via Google tokeninfo; returns user UUID (no session JWT yet) |
-| Client Auth Persistence | ✅ Minimal | Session stored in companion via local storage (Rust side ensures authenticated before overlay) |
-| Stats Endpoint (/stats) | ✅ Implemented | Returns media_count, embedded_count, last_indexed_at (user id/email resolution) |
-| PDF Page Rendering | ⏳ Planned | PDF pages currently added as modality=pdf_page but not rendered into thumbnails or split pages |
-| Video Keyframes / Audio Transcripts | ⏳ Planned | Not implemented |
-| Android IME | 🧪 Skeleton | Project stub only (no runtime search bridging yet) |
-| iOS Keyboard Extension | ⏳ Not started | — |
-| Privacy Modes | 🧩 Partial | Hybrid implemented (inline bytes). Strict‑Local not yet (no local embedding) |
-| Observability (metrics / tracing) | ⏳ Planned | Logging extensive; metrics, OTel not added |
-| CI Build / Release | ✅ Added | GitHub Actions multi‑platform build (companion-release.yml) |
-| Evaluation Harness | ⏳ Planned | sample_eval.json placeholder only |
-| Security Hardening | ⏳ Planned | No authz scopes / rate limiting / JWT yet |
+| Companion (scan • overlay • auth) | ✅ Working | Recursive scan (throttled), cinematic onboarding + preview, overlay global shortcut, Google OAuth; overlay routing fixed |
+| Preview Experience | ✅ Polished | Local image previews via data URLs (no local-resource errors), cinematic ImageTrail with vignette, clear CTAs |
+| Media Enumeration | ✅ Basic | File-extension modality: image/pdf_page/video; EXIF/GPS/OCR extraction planned |
+| Streaming Sync (/sync/stream) | ✅ Implemented | NDJSON upsert, inline image bytes (<=25MB), queue + depth metrics |
+| Embedding (GPU) | ✅ Implemented | SigLIP So400M (1152-dim), multi-crop + panorama tiling; text + image endpoints |
+| Search (/search) | ✅ Working | pgvector IVFFlat (lists=100, probes configurable), filters (modality/time/geo/album), keyword fallback |
+| Rerank (heuristics) | ✅ Working | Time decay/window, geo boosts, modality prior; retrieval-core exposes typed rerank API |
+| retrieval-core SDK | ✅ Published | @taura-ai/retrieval-core: typed client (search/embed), hybridSearch, pgvector helpers, examples+docs |
+| Postgres + pgvector | ✅ Working | 1152-dim vectors, dim-check + table recreate, practical indexes (modality/album/geo/not-deleted) |
+| Auth schema | ✅ Added | auth_identities, sessions, api_tokens, orgs, org_members, invites, audit_logs in schema |
+| Stats (/stats) | ✅ Implemented | media_count, embedded_count, last_indexed_at |
+| Privacy Modes | 🧩 Partial | Hybrid implemented; Strict-Local (local embedding) planned |
+| Observability | ⏳ Planned | OTel/metrics dashboards not yet wired |
+| Mobile Keyboards | 🧪 Skeleton | Android IME stub; iOS extension not started |
+| PDF / Video / Audio | ⏳ Planned | PDF raster/keyframes/transcripts not implemented |
+| CI Build/Release | ✅ Added | Multi‑platform build pipeline (companion‑release.yml) |
 
 ## 🏗 Architecture Overview
-Core components (see `AGENTS.md` for exhaustive spec):
-- Companion App (Tauri v2 / React) – local indexing, UI, optional local vector db.
-- API Gateway (Go + Fiber) – search & sync orchestration, auth, metrics.
-- Embedder (Python FastAPI) – SigLIP‑2 / MobileCLIP embeddings (GPU in prod, CPU dev fallback).
-- Postgres + pgvector – primary vector store (768‑d).
-- Future workers – PDF page rasterization, video keyframes, audio (Whisper) transcripts.
+Core components:
+- Companion App (Tauri v2 / React) - local indexing, UI, optional local vector db.
+- API Gateway (Go + Fiber) - search and sync orchestration, auth, metrics.
+- Embedder (Python FastAPI) - SigLIP So400M (1152-dim), multi-crop + panorama tiling.
+- Postgres + pgvector - primary vector store (1152-d), IVFFlat lists=100.
+- Workers (future) - PDF page rasterization, keyframes, transcripts.
 
-Data model (simplified): `media (meta)` ↔ `media_vecs (embedding vector[768])`.
+Data model (simplified): users / media / media_vecs (vector[1152]) / auth tables (identities, sessions, API tokens), orgs, audit logs.
 
 ## 🛠 Local Development
 
 ### Prerequisites
 Docker Desktop, Node.js 18+, pnpm, Rust toolchain, Go 1.23+, Python 3.9+.
 
-### One‑liner (infra + companion only)
+### One-liner (infra + companion only)
 ```powershell
 pnpm install; pnpm run dev:infra; pnpm run dev:companion
 ```
@@ -78,21 +82,28 @@ pnpm run dev:companion    # Desktop overlay + settings
 psql -h localhost -U postgres -d taura -f packages/schema/pg.sql
 ```
 
-### Embedder Python Env
-```powershell
+### Python Setup
+```bash
 cd services/embedder
 pip install -r requirements.txt
 ```
+
+## Deployment (current state)
+
+- API Gateway (Go Fiber): deployed on a dedicated VM behind HTTPS. Probes for pgvector IVFFlat are configurable via `SEARCH_IVFFLAT_PROBES` (capped at lists=100).
+- Embedding microservice (Python FastAPI): deployed on Runpod A40 GPU pod. Uses SigLIP So400M (1152-dim) with multi-crop and panorama tiling.
+- Postgres + pgvector: managed on the VM or a hosted Postgres instance, with `media_vecs` dimension 1152 and IVFFlat index `lists=100`.
 
 ## 🔐 Privacy Modes (Design)
 - Strict-Local: Only metadata + (optionally) text embeddings leave device; images embedded locally (future).
 - Hybrid (default for MVP): Images/PDF pages sent (or presigned) to server for embedding; only vectors + thumbs stored.
 
-## 🔎 Retrieval Flow (MVP)
-1. User types query → Gateway embeds text via Embedder.
-2. pgvector ANN: IVF (lists=100) cosine → top 200.
-3. Return top N (default 12) with metadata & thumbnail URIs.
-4. (Phase 2) Rerank with light cross‑encoder.
+## 🔎 Retrieval Flow
+1. User types a query - API Gateway calls the Embedder to embed text (1152-dim).
+2. Gateway runs pgvector ANN (IVFFlat, cosine, probes configurable) with filters (modality, time range, geo, album) and selects a candidate pool.
+3. Gateway applies lightweight heuristic rerank (time decay or window, geo boosts, modality prior) and returns top N with metadata and thumbnail URIs.
+4. If vector search is low confidence or empty, a keyword fallback (URI, album, source) is used and results are reranked.
+5. Optional: clients can apply additional reranking using @taura-ai/retrieval-core (hybridSearch) if desired.
 
 ## 🧪 API (Currently Implemented)
 ```
@@ -118,7 +129,10 @@ POST /embed/image/batch             -> { vecs[], errors[], diagnostics[] }
 - Click result: open file & hide overlay
 
 ## 📦 Build & Release (Planned CI)
-Tagged release (vX.Y.Z) will trigger multi‑platform build (Windows .msi/.exe, macOS .dmg/.app, Linux AppImage/Deb/RPM) via GitHub Actions using `@tauri-apps/cli`. Artifacts uploaded to a draft GitHub Release; optional notarization/signing steps can be added later.
+Tagged release (vX.Y.Z) will trigger multi-platform build (Windows .msi/.exe, macOS .dmg/.app, Linux AppImage/Deb/RPM) via GitHub Actions using `@tauri-apps/cli`. Artifacts uploaded to a draft GitHub Release; optional notarization/signing steps can be added later.
+
+Download installers from GitHub Releases and install:
+- https://github.com/TAURAAI/taura/releases
 
 ### Local Production Build
 ```powershell
@@ -132,32 +146,19 @@ apps/companion        # Tauri desktop (React + Vite + Tailwind 4)
 services/api-gateway  # Go Fiber gateway
 services/embedder     # FastAPI embedding service
 packages/schema       # SQL migrations / schema
-infra/docker-compose  # Postgres + pgvector
-AGENTS.md             # Detailed engineering plan
+packages/retrieval-core # Typed SDK (client, rerank, sql helpers)
 ```
 
 ## 🚀 Roadmap (Next Milestones)
 - [ ] Implement /stats handler (media counts, last indexed timestamps)
 - [ ] Thumbnail generation + storage (incl. PDF raster pages)
 - [ ] PDF page splitting & per-page embedding
-- [ ] Add auth token issuance (JWT/PASETO) & session renewal
-- [ ] Strict‑Local mode (local embedding fallback / model packaging)
-- [ ] Metrics + tracing (OpenTelemetry) & p95 dashboards
+- [ ] Add auth token issuance (JWT or PASETO) and session renewal
+- [ ] Strict-Local mode (local embedding fallback / model packaging)
+- [ ] Metrics + tracing (OpenTelemetry) and p95 dashboards
 - [ ] Evaluation harness (Recall@10, MRR) with curated test set
 - [ ] Android IME integration calling /search (debounced)
-- [ ] Cross‑encoder rerank (top‑K ~200) optional toggle
+- [ ] Cross-encoder rerank (top-K ~200) optional toggle
 - [ ] Rate limiting & abuse protections
 - [ ] Keyframe extraction for video, transcript ingestion for audio/video
 - [ ] Encryption / secure at-rest local cache (future)
-
-## 🤝 Contributing
-Early stage. Feel free to open issues or small PRs (lint/tests forthcoming). Please discuss major architectural changes first (see AGENTS.md). Ensure commits keep build green.
-
-## 🧾 License
-MIT — see [LICENSE](LICENSE) (subject to change before 1.0 if needed).
-
-## 📝 Appendix: Embedding & Search (Detail)
-Companion -> /sync (batch) -> Gateway inserts media rows and calls Embedder for each new image (to be queued later). Query path: text -> /embed/text -> vector -> pgvector ANN using `embedding <=> $query` ordering (cosine). Score returned as `1 - distance` for intuitive ranking.
-
----
-> Generated status updated automatically by maintainers (last manual edit: Oct 2025).

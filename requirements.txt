@@ -1,0 +1,3 @@
+# Root requirements for Python components in this monorepo (we have used Python 3.10 on our Runpod deployment)
+# Delegates to the Embedder service requirements
+-r services/embedder/requirements.txt
