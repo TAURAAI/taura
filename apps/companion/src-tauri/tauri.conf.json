@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Taura",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.taura.overlay",
   "build": {
     "frontendDist": "../dist",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Taura - Settings & Configuration",
+        "title": "Taura",
         "width": 1000,
         "height": 700,
         "resizable": true,
