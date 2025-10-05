@@ -44,10 +44,18 @@ export interface StatsResponse {
   last_indexed_at?: string | null
 }
 
-export async function fetchStats(user_id?: string): Promise<StatsResponse> {
+export async function fetchStats(user_id?: string): Promise<StatsResponse | null> {
   const base = getApiBase()
-  const effectiveUser = (user_id ?? getUserId()).trim()
-  const res = await fetch(`${base}/stats?user_id=${encodeURIComponent(effectiveUser)}`)
-  if (!res.ok) throw new Error(`stats failed: ${res.status}`)
-  return res.json()
+  const effectiveUser = (user_id ?? getUserId() ?? '').trim()
+  if (!effectiveUser) return null
+  try {
+    const res = await fetch(`${base}/stats?user_id=${encodeURIComponent(effectiveUser)}`)
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 404) return null
+      throw new Error(`stats failed: ${res.status}`)
+    }
+    return res.json()
+  } catch (e) {
+    return null
+  }
 }

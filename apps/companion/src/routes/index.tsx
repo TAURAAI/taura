@@ -107,6 +107,10 @@ function HomeScreen() {
   async function loadStats() {
     try {
       const data = await fetchStats(config.userId)
+      if (!data) {
+        setStats({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
+        return
+      }
       setStats({
         filesIndexed: data.embedded_count ?? 0,
         totalMedia: data.media_count ?? 0,
