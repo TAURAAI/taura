@@ -126,17 +126,18 @@ function SettingsApp() {
     }
   }
 
-  async function handleShowOverlay() {
-    if (!auth.session) {
-      console.warn('Overlay requires authentication')
-      return
-    }
-    try {
-      await invoke('toggle_overlay')
-    } catch (err) {
-      console.error('Failed to show overlay:', err)
-    }
-  }
+  //commented because unused
+  // async function handleShowOverlay() {
+  //   if (!auth.session) {
+  //     console.warn('Overlay requires authentication')
+  //     return
+  //   }
+  //   try {
+  //     await invoke('toggle_overlay')
+  //   } catch (err) {
+  //     console.error('Failed to show overlay:', err)
+  //   }
+  // }
 
   async function updateThrottle(value: number) {
     const clamped = Math.max(0, Math.round(value))
