@@ -27,6 +27,7 @@ function useIndexerState() {
 }
 
 function HomeScreen() {
+  useEffect(() => { document.title = 'Taura — Home' }, [])
   const idx = useIndexerState()
   const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
@@ -171,7 +172,7 @@ function HomeScreen() {
             </div>
             <div>
               <span className="stat-label">Stream</span>
-              <div className="stat-value text-sm text-white/70">{streamSummary}</div>
+              <div className="stat-value text-sm text-white/70">{streamSummary}{queueDepth ? ` • Q${queueDepth}` : ''}</div>
             </div>
           </div>
         </div>

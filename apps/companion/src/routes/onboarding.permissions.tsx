@@ -1,16 +1,18 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { invoke } from '@tauri-apps/api/core'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { setRootPath } from '../indexer'
 import { useAuthContext } from '../state/AuthContext'
 import { useAppConfig, updateConfig } from '../state/config'
 import { OnboardingLayout } from '../ui/OnboardingLayout'
-import Prism from '../components/backgrounds/Prism'
+import Aurora from '../components/backgrounds/Aurora'
 
 export const Route = createFileRoute('/onboarding/permissions')({
   component: Permissions
 })
 
 function Permissions() {
+  if (typeof document !== 'undefined') { document.title = 'Taura — Permissions' }
   const { session } = useAuthContext()
   const cfg = useAppConfig()
   const navigate = useNavigate()
@@ -19,17 +21,36 @@ function Permissions() {
   const [picked, setPicked] = useState(false)
   const [mode, setMode] = useState(cfg.privacyMode)
 
+  useEffect(() => {
+    // if user already selected a root earlier (e.g. resumed onboarding), hydrate
+    const existing = localStorage.getItem('taura.root')
+    if (existing) {
+      setRoot(existing)
+      setPicked(true)
+    }
+  }, [])
+
   async function pick() {
     try {
       const res = await invoke<string | null>('pick_folder')
-      if (res) { setRoot(res); setPicked(true) }
+      if (res) {
+        setRoot(res)
+        setPicked(true)
+        try {
+          localStorage.setItem('taura.root', res)
+        } catch {}
+        // Immediately propagate to indexer so preview and settings share state
+        await setRootPath(res)
+      }
     } catch {}
   }
 
-  function apply() {
+  async function apply() {
     if (mode !== cfg.privacyMode) updateConfig({ privacyMode: mode })
-    // root path persisted via config for now (extend config schema) or emitted to indexer
-    // TODO: integrate with indexer root path persistence
+    if (root) {
+      try { localStorage.setItem('taura.root', root) } catch {}
+      await setRootPath(root)
+    }
     navigate({ to: '/onboarding/preview', replace: true })
   }
 
@@ -45,7 +66,7 @@ function Permissions() {
       subtitle="Pick a root folder (can add more later) and choose a privacy mode."
       steps={steps}
       currentStepId="permissions"
-      background={<Prism animationType='hover' timeScale={0.15} hueShift={0} bloom={0.4} />}
+      background={<Aurora speed={0.7} amplitude={0.9} blend={0.55} />}
       onStepClick={(id) => {
         if (id === 'welcome') navigate({ to: '/onboarding/welcome' })
       }}

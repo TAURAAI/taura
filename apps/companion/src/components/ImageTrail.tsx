@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useRef, useEffect, type JSX } from 'react';
 import { gsap } from 'gsap';
 

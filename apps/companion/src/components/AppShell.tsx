@@ -51,7 +51,7 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
 
   return (
     <div className={`layout-shell${collapsed ? ' sidebar-collapsed' : ''}`}> 
-      <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
+      <aside className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary sidebar">
         <div className="sidebar-brand shadow-md">
           <button className="sidebar-logo" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={toggleSidebar}>
             <svg className="w-5 h-5" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth={1.6}>
@@ -70,7 +70,7 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
             <span className="block text-[11px] text-white/45 leading-snug select-none">Multimodal Recall</span>
           </div>
         </div>
-        <nav className="sidebar-nav" aria-label="Navigation">
+        <nav className="sidebar-nav" aria-label="Primary navigation">
           {nav.map((item) => (
             <Link
               key={item.to}
@@ -104,7 +104,7 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
           {footer}
         </div>
       </aside>
-      <main className="content-area" role="main">{children}</main>
+      <main className="content-area" role="main" id="main-content">{children}</main>
     </div>
   )
 }

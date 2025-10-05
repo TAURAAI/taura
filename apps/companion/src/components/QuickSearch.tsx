@@ -52,17 +52,28 @@ export function QuickSearch({ userId, onResults }: QuickSearchProps) {
           Open Overlay
         </button>
       </div>
-      <div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const first = results[0];
+          if (first) {
+            invoke('open_file', { path: first.uri }).catch(()=>{})
+          }
+        }}
+      >
         <input
           value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder="Type to search..."
             className="w-full bg-white/5 border border-white/10 rounded-md px-3 py-2 text-sm text-white/90 focus:outline-none focus:ring-1 focus:ring-indigo-500 placeholder:text-white/30"
             aria-label="Quick search input"
+            inputMode="search"
+            autoComplete="off"
+            spellCheck={false}
         />
-      </div>
-      {error && <div className="text-xs text-red-400">{error}</div>}
-      <ul className="flex flex-col divide-y divide-white/5 rounded-md overflow-hidden border border-white/10 bg-white/2">
+      </form>
+      {error && <div className="text-xs text-red-400" role="alert">{error}</div>}
+      <ul className="flex flex-col divide-y divide-white/5 rounded-md overflow-hidden border border-white/10 bg-white/2" aria-live="polite">
         {loading && <li className="p-3 text-xs text-white/40">Searching…</li>}
         {!loading && results.length === 0 && query && <li className="p-3 text-xs text-white/40">No matches</li>}
         {!loading && !query && <li className="p-3 text-xs text-white/40">Start typing to see results</li>}

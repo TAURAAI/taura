@@ -439,7 +439,6 @@ pub fn run() {
             toggle_overlay,
             show_main_window,
             open_file,
-            resize_overlay,
             google_auth_start,
             get_session,
             logout,

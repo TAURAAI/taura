@@ -20,6 +20,7 @@ function useIndexerState() {
 }
 
 function SettingsApp() {
+  useEffect(() => { document.title = 'Taura — Settings' }, [])
   const idx = useIndexerState()
   const config = useAppConfig()
   const auth = useAuthContext()
@@ -296,7 +297,16 @@ function SettingsApp() {
             <h2 className="text-base font-semibold text-white">Server & privacy</h2>
             <p className="text-xs text-slate-400">Adjust connection settings and scan pacing.{idx.serverOnline === false && ' (offline – syncing will resume silently)'}</p>
                   {auth.session?.email && (
-                    <p className="mt-2 text-xs text-indigo-200">Signed in as <span className="font-medium text-white">{auth.session.email}</span></p>
+                    <div className="mt-2 flex flex-col gap-2">
+                      <p className="text-xs text-indigo-200">Signed in as <span className="font-medium text-white">{auth.session.email}</span></p>
+                      <button
+                        type="button"
+                        className="btn-outline w-fit text-xs px-3 py-1 rounded mt-1"
+                        onClick={async () => { await auth.logout(); window.location.reload(); }}
+                      >
+                        Logout
+                      </button>
+                    </div>
                   )}
           </div>
 

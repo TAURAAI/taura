@@ -1,148 +1,163 @@
-# Taura Development Setup
+<div align="center">
 
-## Quick Start (Tauri App Only)
+# Taura
 
-To test the media discovery functionality without backend services:
+Instant recall of your personal media (photos, PDF pages, documents – more soon) directly from any text box or the global overlay. Type a memory like "paris eiffel 2019" and surface the exact photo or page in under 150 ms.
 
-```bash
-# Start just the Tauri companion app
-cd apps/companion && pnpm dev
-```
+[![Companion Build & Release](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml/badge.svg)](https://github.com/TAURAAI/taura/actions/workflows/companion-release.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#license)
 
-This will start the Tauri app which can scan local folders and display media files.
+</div>
 
-## Full Development Stack
+## ✨ Vision
+While you type, Taura suggests the right media instantly. Multi‑modal embeddings + time/place heuristics + lightweight UX (desktop overlay + mobile keyboards).
+
+## 🔍 Current Status (Oct 2025)
+| Area | Status | Notes |
+|------|--------|-------|
+| Tauri Companion (scan + overlay + auth) | ✅ Working | Folder scan (recursive, throttled), NDJSON streaming sync, overlay window + global shortcut, Google OAuth flow (token verify via Google endpoint) |
+| Media Enumeration (images / pdf / video tags) | ✅ Basic | Classifies file extension to modality (image, pdf_page, video); EXIF, GPS, OCR not yet extracted |
+| Streaming Sync (/sync/stream) | ✅ Implemented | Per-item upsert + inline image bytes (<=25MB) + enqueue embedding batcher & queue depth metrics |
+| Embedding Queue + Batch Processor | ✅ Implemented | In‑process queue w/ retries, batch dispatch to /embed/image/batch, persistence to media_vecs |
+| Text Embedding Path | ✅ Working | /search calls embedder /embed/text with diagnostics & norm validation |
+| Image Embedding Path | ✅ Working | Inline base64 path (hybrid mode) → queue → batch embedding (multi‑scale + crops + panorama tiling) |
+| Search Endpoint (/search) | ✅ Working | Vector ANN (IVFFlat) + dynamic probes + keyword fallback + temporal (year/month) rerank & heuristic boosting |
+| Filters (modality, time range, geo, album) | ✅ Working | All parsed & applied server‑side in SQL clause construction |
+| Keyword Fallback | ✅ Working | When ANN low score / empty, falls back to LIKE over uri/album/source |
+| Rerank (light heuristic) | ✅ Working | Score bonuses for keyword/temporal hints; no cross‑encoder yet |
+| Postgres + pgvector infra | ✅ Working | Connection pool + ivfflat.probes tuning (env) |
+| Auth (Google token verification) | ✅ Basic | ID token verification via Google tokeninfo; returns user UUID (no session JWT yet) |
+| Client Auth Persistence | ✅ Minimal | Session stored in companion via local storage (Rust side ensures authenticated before overlay) |
+| Stats Endpoint (/stats) | ✅ Implemented | Returns media_count, embedded_count, last_indexed_at (user id/email resolution) |
+| PDF Page Rendering | ⏳ Planned | PDF pages currently added as modality=pdf_page but not rendered into thumbnails or split pages |
+| Video Keyframes / Audio Transcripts | ⏳ Planned | Not implemented |
+| Android IME | 🧪 Skeleton | Project stub only (no runtime search bridging yet) |
+| iOS Keyboard Extension | ⏳ Not started | — |
+| Privacy Modes | 🧩 Partial | Hybrid implemented (inline bytes). Strict‑Local not yet (no local embedding) |
+| Observability (metrics / tracing) | ⏳ Planned | Logging extensive; metrics, OTel not added |
+| CI Build / Release | ✅ Added | GitHub Actions multi‑platform build (companion-release.yml) |
+| Evaluation Harness | ⏳ Planned | sample_eval.json placeholder only |
+| Security Hardening | ⏳ Planned | No authz scopes / rate limiting / JWT yet |
+
+## 🏗 Architecture Overview
+Core components (see `AGENTS.md` for exhaustive spec):
+- Companion App (Tauri v2 / React) – local indexing, UI, optional local vector db.
+- API Gateway (Go + Fiber) – search & sync orchestration, auth, metrics.
+- Embedder (Python FastAPI) – SigLIP‑2 / MobileCLIP embeddings (GPU in prod, CPU dev fallback).
+- Postgres + pgvector – primary vector store (768‑d).
+- Future workers – PDF page rasterization, video keyframes, audio (Whisper) transcripts.
+
+Data model (simplified): `media (meta)` ↔ `media_vecs (embedding vector[768])`.
+
+## 🛠 Local Development
 
 ### Prerequisites
+Docker Desktop, Node.js 18+, pnpm, Rust toolchain, Go 1.23+, Python 3.9+.
 
-1. **Docker Desktop** - Required for database
-2. **Go 1.23+** - For API Gateway
-3. **Python 3.9+** - For embedding service
-4. **Node.js 18+** and **pnpm** - For frontend
-5. **Rust** - For Tauri app
+### One‑liner (infra + companion only)
+```powershell
+pnpm install; pnpm run dev:infra; pnpm run dev:companion
+```
 
-### Setup Infrastructure
-
-```bash
-# Start PostgreSQL with pgvector
+### Full Stack (in parallel via Turbo)
+```powershell
+pnpm install
 pnpm run dev:infra
-```
-
-### Development Commands
-
-```bash
-# Start everything (requires Docker, Go, Python)
 pnpm run dev:full
-
-# Or start individual services:
-pnpm run dev:companion     # Tauri app
-pnpm run dev:api-gateway   # Go backend
-pnpm run dev:embedder      # Python FastAPI
-pnpm run dev:infra         # Docker containers
 ```
 
-### Environment Setup
+### Individual Services
+```powershell
+pnpm run dev:infra        # Postgres + pgvector
+pnpm run dev:api-gateway  # Go API (localhost:8080)
+pnpm run dev:embedder     # FastAPI embedder (localhost:9000)
+pnpm run dev:companion    # Desktop overlay + settings
+```
 
-#### Python Dependencies
-```bash
+### Database Schema Apply
+```powershell
+psql -h localhost -U postgres -d taura -f packages/schema/pg.sql
+```
+
+### Embedder Python Env
+```powershell
 cd services/embedder
 pip install -r requirements.txt
 ```
 
-#### Go Dependencies
-```bash
-cd services/api-gateway
-go mod download
+## 🔐 Privacy Modes (Design)
+- Strict-Local: Only metadata + (optionally) text embeddings leave device; images embedded locally (future).
+- Hybrid (default for MVP): Images/PDF pages sent (or presigned) to server for embedding; only vectors + thumbs stored.
+
+## 🔎 Retrieval Flow (MVP)
+1. User types query → Gateway embeds text via Embedder.
+2. pgvector ANN: IVF (lists=100) cosine → top 200.
+3. Return top N (default 12) with metadata & thumbnail URIs.
+4. (Phase 2) Rerank with light cross‑encoder.
+
+## 🧪 API (Currently Implemented)
+```
+GET  /healthz                       -> { status }
+POST /auth/google                   -> verify Google id_token, upsert user, return { user_id }
+POST /user/upsert                   -> create or fetch user by email (simple helper)
+POST /sync                          -> JSON batch (per-item inline) (legacy path)
+POST /sync/stream (NDJSON)          -> High-throughput streaming ingest + enqueue embeds
+POST /search                        -> ANN + rerank + filters + fallback
+GET  /stats?user_id=EMAIL|UUID      -> { user_id, media_count, embedded_count, last_indexed_at }
+
+Embedder Service (FastAPI):
+GET  /healthz                       -> { status: ok }
+POST /warmup                        -> run model warmup (text+image)
+POST /embed/text                    -> { vec, diag }
+POST /embed/text/batch              -> { vecs[] }
+POST /embed/image (multipart|json)  -> { vec, diag }
+POST /embed/image/batch             -> { vecs[], errors[], diagnostics[] }
 ```
 
-## Architecture
-
-- **Companion App**: Tauri v2 app for media indexing and search UI
-- **API Gateway**: Go Fiber service for handling requests
-- **Embedder**: Python FastAPI service for generating embeddings
-- **Database**: PostgreSQL with pgvector extension
-
-## Current Status
-
-✅ **Working**: Media file discovery and scanning in Tauri app  
-🔄 **In Progress**: Backend integration, embedding generation  
-🚧 **Todo**: Search functionality, proper folder picker
-  schema/             # SQL schema (pg.sql)
-infra/
-  docker-compose.yml  # Postgres (pgvector) + Adminer
-```
-
-## Prerequisites
-- Node.js 18+ (pnpm installed globally: `npm i -g pnpm`)
-- Rust toolchain (for Tauri)
-- Go 1.22+
-- Docker Desktop
-
-## First-time Setup
-```powershell
-# From repo root
-pnpm install # (installs root dev deps like turbo if any added later)
-
-# Start database
-docker compose -f infra/docker-compose.yml up -d
-
-# Apply schema
-# (Install psql if not present; on Windows via winget: winget install PostgreSQL.postgresql)
-psql -h localhost -U postgres -d omnirecall -f packages/schema/pg.sql
-```
-
-## Run Services
-```powershell
-# API Gateway
-cd services/api-gateway
-go run ./cmd/server
-
-# Tauri Companion (separate shell)
-cd apps/companion
-npm run dev  # or pnpm dev once converted
-# In another shell: cargo build will be triggered automatically by tauri when building the desktop app 
-```
-
-Visit Adminer: http://localhost:8081 (system: PostgreSQL, server: postgres, user: postgres, password: postgres, db: omnirecall)
-
-## Endpoints (Stub)
-- GET `http://localhost:8080/healthz` → "ok"
-- POST `http://localhost:8080/search` → `{ results: [] }`
-- POST `http://localhost:8080/sync` → `{ upserted: N }`
-
-## Next Steps
-- Wire `/search` to real pgvector query + embedding service
-- Implement embedding microservice (FastAPI + SigLIP-2)
-- Add ingestion logic (folder scan, EXIF extraction, hashing)
-- Add filters (time, geo, modality) to `PostSearch`
-- Introduce OpenTelemetry, metrics, logging enrichment
-
-## Notes
-Tailwind v4 single import directive in `src/styles.css` is deliberate.
-Tauri `scan_folder` command currently stubbed.
-
-## Updated Embedding & Search Workflow
-
-1. Companion app scans a folder and calls `/sync` with a list of media items (user_id may be an email; backend resolves a UUID).
-2. The API gateway inserts (or resolves) the media row and for `image` and `pdf_page` modalities immediately calls the embedder service.
-3. Returned 768‑d embedding is inserted/upserted into `media_vecs`.
-4. The overlay UI issues `/search` as you type. Gateway embeds the query text, performs pgvector ANN (`ORDER BY embedding <=> query ASC LIMIT K`).
-5. Selecting a result opens the file via a native OS open command and hides the overlay. Press `Esc` to hide overlay at any time.
-
-### Embedder Endpoints (current contract)
-`POST /embed/text` JSON `{ "text": "describe a sunset over water" }` → `{ vec: number[768] }`
-
-`POST /embed/image` JSON (preferred during dev): `{ "uri": "C:/path/to/image.jpg" }` (requires env `ALLOW_LOCAL_URI=1`).
-Or supply `{ "bytes_b64": "..." }` with base64 image bytes. Multipart file upload also still works.
-
-### Overlay Shortcuts
-- Esc: hide overlay window
+## 🖥 Overlay UX Shortcuts
+- Esc: hide overlay
 - Click result: open file & hide overlay
 
-### Pending Enhancements
-- Batch embedding in `/sync` (collect N images then call future `/embed/image/batch`)
-- Time & geo filters in `/search`
-- Background queue for embeddings to keep `/sync` low latency
+## 📦 Build & Release (Planned CI)
+Tagged release (vX.Y.Z) will trigger multi‑platform build (Windows .msi/.exe, macOS .dmg/.app, Linux AppImage/Deb/RPM) via GitHub Actions using `@tauri-apps/cli`. Artifacts uploaded to a draft GitHub Release; optional notarization/signing steps can be added later.
 
-## License
-MIT (adjust as needed)
+### Local Production Build
+```powershell
+cd apps/companion
+pnpm build && pnpm tauri:dev # (replace with tauri build once signing configured)
+```
+
+## 📁 Repo Layout (excerpt)
+```
+apps/companion        # Tauri desktop (React + Vite + Tailwind 4)
+services/api-gateway  # Go Fiber gateway
+services/embedder     # FastAPI embedding service
+packages/schema       # SQL migrations / schema
+infra/docker-compose  # Postgres + pgvector
+AGENTS.md             # Detailed engineering plan
+```
+
+## 🚀 Roadmap (Next Milestones)
+- [ ] Implement /stats handler (media counts, last indexed timestamps)
+- [ ] Thumbnail generation + storage (incl. PDF raster pages)
+- [ ] PDF page splitting & per-page embedding
+- [ ] Add auth token issuance (JWT/PASETO) & session renewal
+- [ ] Strict‑Local mode (local embedding fallback / model packaging)
+- [ ] Metrics + tracing (OpenTelemetry) & p95 dashboards
+- [ ] Evaluation harness (Recall@10, MRR) with curated test set
+- [ ] Android IME integration calling /search (debounced)
+- [ ] Cross‑encoder rerank (top‑K ~200) optional toggle
+- [ ] Rate limiting & abuse protections
+- [ ] Keyframe extraction for video, transcript ingestion for audio/video
+- [ ] Encryption / secure at-rest local cache (future)
+
+## 🤝 Contributing
+Early stage. Feel free to open issues or small PRs (lint/tests forthcoming). Please discuss major architectural changes first (see AGENTS.md). Ensure commits keep build green.
+
+## 🧾 License
+MIT — see [LICENSE](LICENSE) (subject to change before 1.0 if needed).
+
+## 📝 Appendix: Embedding & Search (Detail)
+Companion -> /sync (batch) -> Gateway inserts media rows and calls Embedder for each new image (to be queued later). Query path: text -> /embed/text -> vector -> pgvector ANN using `embedding <=> $query` ordering (cosine). Score returned as `1 - distance` for intuitive ranking.
+
+---
+> Generated status updated automatically by maintainers (last manual edit: Oct 2025).

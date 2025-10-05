@@ -9,15 +9,38 @@ html, body {
   overscroll-behavior: none; /* prevent white flash bounce */
   scrollbar-gutter: stable both-edges;
   text-rendering: optimizeLegibility;
+  -webkit-tap-highlight-color: rgba(255,255,255,0.05);
 }
 
-body { min-height: 100vh; }
+body { min-height: 100vh; font-variant-numeric: tabular-nums; }
+
+/* Touch affordances */
+button, a, [role="button"], input, select, textarea { touch-action: manipulation; }
+
+/* Skip link for keyboard users */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -40px;
+  z-index: 1000;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.7);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.skip-link:focus { top: 8px; outline: 2px solid rgb(var(--ring-focus)); }
 
 ::selection { background: rgba(40,140,255,0.35); color: #fff; }
 
 /* Improve focus visibility without ugly outlines */
 :focus-visible { outline: 2px solid rgb(var(--ring-focus)); outline-offset: 2px; border-radius: 4px; }
 :focus { outline: none; }
+
+/* Prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition: none !important; scroll-behavior: auto !important; }
+}
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New",
@@ -196,7 +219,7 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
 @keyframes overlay-fade-in { from { opacity:0; transform:translateY(6px) scale(.985);} to { opacity:1; transform:translateY(0) scale(1);} }
 .animate-overlay-fade { animation: overlay-fade-in 150ms cubic-bezier(.33,.16,.2,1); }
 
-.palette-root { position:relative; inset:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; padding:5vh 0; background: radial-gradient(circle at top, rgba(40,140,255,0.22), transparent 55%); backdrop-filter:blur(16px) saturate(118%); }
+.palette-root { position:relative; inset:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; padding:5vh 0; background: radial-gradient(circle at top, rgba(40,140,255,0.22), transparent 55%); backdrop-filter:blur(16px) saturate(118%); overscroll-behavior: contain; }
 
 .palette-card {
   position: relative;
@@ -312,6 +335,7 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
   align-items: center;
   gap: 16px;
   padding: 14px 22px;
+  min-height: 44px;
   transition: background-color 120ms ease;
 }
 .palette-row:hover {
@@ -392,3 +416,6 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
     display: block;
   }
 }
+
+/* Scroll anchors: avoid heading overlap */
+h1, h2, h3, h4, h5, h6 { scroll-margin-top: 16px; }

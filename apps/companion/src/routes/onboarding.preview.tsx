@@ -1,20 +1,18 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { useAuthContext } from '../state/AuthContext'
 import { OnboardingLayout } from '../ui/OnboardingLayout'
-import Prism from '../components/backgrounds/Prism'
+import Aurora from '../components/backgrounds/Aurora'
 import ImageTrail from '../components/ImageTrail'
+import { invoke } from '@tauri-apps/api/core'
+import { useEffect, useState } from 'react'
 
-// Sample placeholder thumbnails (replace with local assets or generated thumbs later)
-const SAMPLE_IMAGES = [
-  'https://picsum.photos/seed/taura1/400/300',
-  'https://picsum.photos/seed/taura2/400/300',
-  'https://picsum.photos/seed/taura3/400/300',
-  'https://picsum.photos/seed/taura4/400/300',
-  'https://picsum.photos/seed/taura5/400/300',
-  'https://picsum.photos/seed/taura6/400/300',
-  'https://picsum.photos/seed/taura7/400/300',
-  'https://picsum.photos/seed/taura8/400/300'
-]
+interface ScanItem { path: string; modality: string; size: number; modified?: string | null }
+
+function isImage(path: string, modality?: string) {
+  if (modality && modality.startsWith('image')) return true
+  const lower = path.toLowerCase()
+  return /(\.jpg|\.jpeg|\.png|\.gif|\.webp|\.bmp|\.tiff|\.tif|\.heic|\.heif)$/.test(lower)
+}
 
 export const Route = createFileRoute('/onboarding/preview')({
   component: PreviewStep
@@ -24,6 +22,33 @@ function PreviewStep() {
   const { session } = useAuthContext()
   const navigate = useNavigate()
   if (!session) throw redirect({ to: '/onboarding/welcome' })
+  const [samples, setSamples] = useState<string[]>([])
+  const [loading, setLoading] = useState(true)
+  const [rootShown, setRootShown] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const root = localStorage.getItem('taura.root')
+        setRootShown(root)
+        if (!root) { setSamples([]); setLoading(false); return }
+        // Use scan_folder to fetch a pool of candidates (does not persist index). Limit for speed.
+        const res: any = await invoke('scan_folder', { path: root, maxSamples: 200, throttleMs: 0 })
+        if (cancelled) return
+        const items: ScanItem[] = Array.isArray(res?.items) ? res.items : []
+        const images = items.filter(it => isImage(it.path, it.modality)).map(i => i.path)
+        const shuffled = images.sort(() => Math.random() - 0.5)
+        // Provide enough for animation variety
+        setSamples(shuffled.slice(0, 40).map(p => `file://${p}`))
+      } catch (e) {
+        if (!cancelled) setSamples([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
 
   const steps = [
     { id: 'welcome', label: 'Account' },
@@ -41,7 +66,7 @@ function PreviewStep() {
       subtitle="Move your cursor to sample how instant visual recall feels. Then launch the overlay and start typing."
       steps={steps}
       currentStepId="preview"
-      background={<Prism animationType='3drotate' timeScale={0.2} hueShift={0} bloom={0.5} />}
+      background={<Aurora speed={0.9} amplitude={1.0} blend={0.5} />}
       onStepClick={(id) => {
         if (id === 'permissions') navigate({ to: '/onboarding/permissions' })
         if (id === 'welcome') navigate({ to: '/onboarding/welcome' })
@@ -49,8 +74,20 @@ function PreviewStep() {
     >
       <div className="w-full flex flex-col md:flex-row gap-10 items-stretch">
         <div className="relative flex-1 min-h-[380px] rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-          <ImageTrail items={SAMPLE_IMAGES} variant={7} />
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center text-xs text-white/50">Scanning preview…</div>
+          )}
+          {!loading && samples.length === 0 && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-white/50 p-6 text-center">
+              <p>No images detected in selected folder.</p>
+              <button className="btn-outline px-3 py-1 text-xs" onClick={() => navigate({ to: '/onboarding/permissions' })}>Pick another folder</button>
+            </div>
+          )}
+          {samples.length > 0 && <ImageTrail items={samples} variant={7} />}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#0c0e10] to-transparent" />
+          {rootShown && (
+            <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded bg-black/40 text-white/60 font-mono max-w-[75%] truncate" title={rootShown}>{rootShown}</div>
+          )}
         </div>
         <div className="w-full max-w-sm flex flex-col gap-5">
           <ul className="space-y-3 text-sm text-white/70">
