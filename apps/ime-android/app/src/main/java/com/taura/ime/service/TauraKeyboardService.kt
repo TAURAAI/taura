@@ -26,10 +26,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Backspace
+import androidx.compose.material.icons.automirrored.outlined.Backspace
+import androidx.compose.material.icons.automirrored.outlined.KeyboardReturn
 import androidx.compose.material.icons.outlined.KeyboardCapslock
 import androidx.compose.material.icons.outlined.KeyboardHide
-import androidx.compose.material.icons.outlined.KeyboardReturn
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -391,7 +391,7 @@ private data class KeyDescriptor(
     val label: String? = null,
     val icon: ImageVector? = null,
     val emphasized: Boolean = false,
-    val height: Dp = 54.dp
+    val height: Dp = 48.dp
 )
 
 private data class RowSpec(
@@ -448,7 +448,7 @@ private fun KeyboardGrid(
     }
     Column(
         modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(9.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         rows.forEach { row ->
             Row(
@@ -561,7 +561,7 @@ private fun letterRows(): List<RowSpec> = listOf(
         keys = buildList {
             add(KeyDescriptor(KeyAction.Shift, weight = 1.7f, icon = Icons.Outlined.KeyboardCapslock))
             addAll("zxcvbnm".map { it.toDescriptor() })
-            add(KeyDescriptor(KeyAction.Delete, weight = 1.7f, icon = Icons.Outlined.Backspace))
+            add(KeyDescriptor(KeyAction.Delete, weight = 1.7f, icon = Icons.AutoMirrored.Outlined.Backspace))
         },
         leadingWeight = 0.4f,
         trailingWeight = 0.4f
@@ -571,9 +571,9 @@ private fun letterRows(): List<RowSpec> = listOf(
             KeyDescriptor(KeyAction.SwitchToSymbols, label = "?123", weight = 1.5f),
             KeyDescriptor(KeyAction.Hide, icon = Icons.Outlined.KeyboardHide, weight = 1.2f),
             KeyDescriptor(KeyAction.Text(","), label = ","),
-            KeyDescriptor(KeyAction.Space, label = "space", weight = 3.6f, height = 60.dp),
+            KeyDescriptor(KeyAction.Space, label = "space", weight = 3.6f, height = 52.dp),
             KeyDescriptor(KeyAction.Text("."), label = "."),
-            KeyDescriptor(KeyAction.Enter, icon = Icons.Outlined.KeyboardReturn, weight = 1.6f, emphasized = true)
+            KeyDescriptor(KeyAction.Enter, icon = Icons.AutoMirrored.Outlined.KeyboardReturn, weight = 1.6f, emphasized = true)
         ),
         leadingWeight = 0.2f,
         trailingWeight = 0.2f
@@ -605,7 +605,7 @@ private fun symbolRows(): List<RowSpec> = listOf(
             add(KeyDescriptor(KeyAction.Text(","), label = ","))
             add(KeyDescriptor(KeyAction.Text("?"), label = "?"))
             add(KeyDescriptor(KeyAction.Text("!"), label = "!"))
-            add(KeyDescriptor(KeyAction.Delete, weight = 1.6f, icon = Icons.Outlined.Backspace))
+            add(KeyDescriptor(KeyAction.Delete, weight = 1.6f, icon = Icons.AutoMirrored.Outlined.Backspace))
         },
         leadingWeight = 0.4f,
         trailingWeight = 0.4f
@@ -614,9 +614,9 @@ private fun symbolRows(): List<RowSpec> = listOf(
         keys = listOf(
             KeyDescriptor(KeyAction.SwitchToLetters, label = "ABC", weight = 1.5f),
             KeyDescriptor(KeyAction.Hide, icon = Icons.Outlined.KeyboardHide, weight = 1.2f),
-            KeyDescriptor(KeyAction.Space, label = "space", weight = 3.6f, height = 60.dp),
+            KeyDescriptor(KeyAction.Space, label = "space", weight = 3.6f, height = 52.dp),
             KeyDescriptor(KeyAction.Text("'"), label = "'"),
-            KeyDescriptor(KeyAction.Enter, icon = Icons.Outlined.KeyboardReturn, weight = 1.6f, emphasized = true)
+            KeyDescriptor(KeyAction.Enter, icon = Icons.AutoMirrored.Outlined.KeyboardReturn, weight = 1.6f, emphasized = true)
         ),
         leadingWeight = 0.2f,
         trailingWeight = 0.2f
