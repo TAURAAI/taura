@@ -37,7 +37,7 @@ export interface RerankOptions {
   timeBoost?: TimeBoostDecay | TimeBoostWindow
   geoBoost?: GeoBoost
   modalityPrior?: Partial<Record<Modality, number>>
-  embeddingDim?: number // default 768
+  embeddingDim?: number // default 1152 (SigLIP So400M)
 }
 
 export interface RankedItem extends MediaItem { score: number }
@@ -131,6 +131,8 @@ WHERE m.user_id = $2 AND m.deleted = false
 ORDER BY v.embedding <=> $1 ASC
 LIMIT $6;`.trim()
 }
+
+export const DEFAULT_EMBED_DIM = 1152
 
 // --- Taura API (typed client) ---
 

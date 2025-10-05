@@ -25,8 +25,7 @@ import {
   type SearchFilters,
 } from '@taura-ai/retrieval-core'
 
-// Given a query embedding and candidates with embeddings
-const q = Float32Array.from([/* 768-dim */])
+const q = Float32Array.from([/* 1152-dim */])
 const candidates: MediaItem[] = [
   { id: '1', userId: 'u', modality: 'image', uri: 'file:///a.jpg', embedding: Float32Array.from([...]), ts: '2023-01-02T03:00:00Z', lat: 48.858, lon: 2.295 },
   // ...

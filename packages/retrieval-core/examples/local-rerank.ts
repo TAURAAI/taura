@@ -2,7 +2,7 @@
 //   pnpm -C packages/retrieval-core run examples:rerank
 import { cosine, rerank, type MediaItem } from '../src/index'
 
-function rndVec(n = 768): Float32Array {
+function rndVec(n = 1152): Float32Array {
   return Float32Array.from({ length: n }, () => Math.random() - 0.5)
 }
 
@@ -34,4 +34,3 @@ main().catch((e) => {
   console.error(e)
   process.exit(1)
 })
-

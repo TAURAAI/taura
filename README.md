@@ -43,10 +43,10 @@ Core components (see `AGENTS.md` for exhaustive spec):
 - Companion App (Tauri v2 / React) – local indexing, UI, optional local vector db.
 - API Gateway (Go + Fiber) – search & sync orchestration, auth, metrics.
 - Embedder (Python FastAPI) – SigLIP‑2 / MobileCLIP embeddings (GPU in prod, CPU dev fallback).
-- Postgres + pgvector – primary vector store (768‑d).
+- Postgres + pgvector – primary vector store (1152‑d, SigLIP So400M).
 - Future workers – PDF page rasterization, video keyframes, audio (Whisper) transcripts.
 
-Data model (simplified): `media (meta)` ↔ `media_vecs (embedding vector[768])`.
+Data model (simplified): `media (meta)` ↔ `media_vecs (embedding vector[1152])`.
 
 ## 🛠 Local Development
 

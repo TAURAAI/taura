@@ -8,6 +8,7 @@
   - `timeBoost?: { kind: 'decay'; halfLifeDays: number; weight?: number } | { kind: 'window'; start?: string; end?: string; weight?: number }`
   - `geoBoost?: { lat: number; lon: number; km: number; weight?: number }`
   - `modalityPrior?: Partial<Record<Modality, number>>`
+  - `embeddingDim?: number` (default 1152)
 
 ## Functions
 - `cosine(a, b): number`
@@ -32,4 +33,3 @@ hybridSearch(client, userId, text, filters?, { topK?, applyClientRerank?, ...rer
 ```
 - If `applyClientRerank` is false, returns server ordering with server `score`.
 - If true, computes query embedding via `embedText` and applies rerank() locally.
-
