@@ -97,13 +97,13 @@ jobs:
       - name: Collect Artifacts (Linux)
         if: matrix.platform == 'linux'
         run: |
-          dir artifacts
           mkdir -p artifacts
           ls -R src-tauri/target/release/bundle
-          cp -v src-tauri/target/release/bundle/appimage/*.AppImage artifacts/ 2>$null || echo 'no appimage'
-          cp -v src-tauri/target/release/bundle/deb/*.deb artifacts/ 2>$null || echo 'no deb'
-          cp -v src-tauri/target/release/bundle/rpm/*.rpm artifacts/ 2>$null || echo 'no rpm'
-          cp -v src-tauri/target/release/bundle/msi/*.msi artifacts/ 2>$null || echo 'no msi (expected)'
+          cp -v src-tauri/target/release/bundle/appimage/*.AppImage artifacts/ 2>/dev/null || echo 'no appimage'
+          cp -v src-tauri/target/release/bundle/deb/*.deb artifacts/ 2>/dev/null || echo 'no deb'
+          cp -v src-tauri/target/release/bundle/rpm/*.rpm artifacts/ 2>/dev/null || echo 'no rpm'
+          cp -v src-tauri/target/release/bundle/msi/*.msi artifacts/ 2>/dev/null || echo 'no msi (expected)'
+        working-directory: apps/companion
       - name: Collect Artifacts (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
