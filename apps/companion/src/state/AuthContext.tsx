@@ -104,8 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setState(s => ({ ...s, loading: true, error: null }))
     try {
       const secret = (import.meta as any).env?.VITE_TAURA_GOOGLE_CLIENT_SECRET || (window as any).TAURA_GOOGLE_CLIENT_SECRET
-      if (!secret) throw new Error('Google Client Secret missing (VITE_TAURA_GOOGLE_CLIENT_SECRET)')
-      const cfg: any = { clientId, clientSecret: secret }
+      const cfg: any = secret ? { clientId, clientSecret: secret } : { clientId }
       const res = await invoke<{ session: Session }>('google_auth_start', { cfg })
       const sess = res.session
       syncConfig(sess)

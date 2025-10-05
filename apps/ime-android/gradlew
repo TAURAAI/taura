@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Copyright 2015 the original authors.
+# Licensed under the Apache License, Version 2.0.
+
+# Wrapper script for Gradle on Unix systems.
+
+APP_BASE_NAME=`dirname "$0"`
+APP_BASE_NAME=`cd "$APP_BASE_NAME" && pwd`
+
+APP_HOME="$APP_BASE_NAME"
+
+JAVA_HOME="$JAVA_HOME"
+
+if [ -n "$JAVA_HOME" ] ; then
+  JAVA_EXEC="$JAVA_HOME/bin/java"
+else
+  JAVA_EXEC="java"
+fi
+
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+
+# Escape application args
+save () {
+  for i do printf %s\\n "$i" | sed "s/'/'\\''/g" | sed -e "s/^/'/" -e "s/$/' \\ "/"; done
+}
+APP_ARGS=`save "$@"`
+
+exec "$JAVA_EXEC" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"

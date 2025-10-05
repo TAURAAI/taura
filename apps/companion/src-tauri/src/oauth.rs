@@ -92,12 +92,11 @@ pub async fn google_auth_start(
     if client_id.is_empty() {
         return Err("client_id empty (set VITE_TAURA_GOOGLE_CLIENT_ID)".into());
     }
-    let client_secret = cfg
+    let client_secret_opt = cfg
         .client_secret
         .as_ref()
         .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "client_secret missing (set VITE_TAURA_GOOGLE_CLIENT_SECRET)".to_string())?;
+        .filter(|s| !s.is_empty());
 
     // --- PKCE code verifier & challenge ---
     use rand::RngCore;
@@ -183,7 +182,7 @@ pub async fn google_auth_start(
         ("grant_type", "authorization_code"),
         ("redirect_uri", &redirect_uri),
     ];
-    params.push(("client_secret", client_secret));
+    if let Some(cs) = client_secret_opt { params.push(("client_secret", cs)); }
     let client = reqwest::Client::new();
     let token_resp = client
         .post("https://oauth2.googleapis.com/token")
@@ -233,7 +232,7 @@ pub async fn google_auth_start(
         picture: userinfo.picture,
         sub: userinfo.sub.clone(),
         client_id: Some(client_id.to_string()),
-        client_secret: Some(client_secret.to_string()),
+        client_secret: client_secret_opt.map(|s| s.to_string()),
     };
     persist_session(&app, &session)?;
     Ok(AuthResult { session })
@@ -248,10 +247,7 @@ async fn do_refresh(app: &tauri::AppHandle, mut existing: Session) -> Result<Ses
         .client_id
         .clone()
         .ok_or_else(|| "client_id missing from session".to_string())?;
-    let client_secret = existing
-        .client_secret
-        .clone()
-        .ok_or_else(|| "client_secret missing from session (re-login required)".to_string())?;
+    let client_secret = existing.client_secret.clone();
 
     #[derive(Deserialize)]
     struct TokenResp {
@@ -263,16 +259,18 @@ async fn do_refresh(app: &tauri::AppHandle, mut existing: Session) -> Result<Ses
         scope: Option<String>,
     }
 
-    let params = [
+    let mut params_vec: Vec<(&str, &str)> = vec![
         ("client_id", client_id.as_str()),
-        ("client_secret", client_secret.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token.as_str()),
     ];
+    if let Some(cs) = client_secret.as_ref() {
+        params_vec.push(("client_secret", cs.as_str()));
+    }
     let client = reqwest::Client::new();
     let resp = client
         .post("https://oauth2.googleapis.com/token")
-        .form(&params)
+        .form(&params_vec)
         .send()
         .await
         .map_err(|e| format!("refresh token request failed: {e}"))?;

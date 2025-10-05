@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Taura Keyboard</string>
+    <string name="settings_title">Taura Keyboard Settings</string>
+    <string name="settings_description">Configure the Taura API connection used for suggestions.</string>
+    <string name="settings_base_url_label">API base URL</string>
+    <string name="settings_user_id_label">User ID</string>
+    <string name="settings_token_label">Auth token</string>
+    <string name="settings_save_button">Save</string>
+    <string name="settings_saved_snackbar">Settings updated</string>
+    <string name="settings_enable_instructions">Enable the keyboard in System Settings to start using it.</string>
+    <string name="suggestion_empty_state">Start typing to see Taura suggestions</string>
+    <string name="suggestion_recent_header">Recent</string>
+</resources>

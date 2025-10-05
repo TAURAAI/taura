@@ -1,0 +1,7 @@
+{
+  "dir": "/sequence",
+  "base": "aurora-",
+  "ext": ".webp",
+  "frameCount": 192,
+  "pad": 3
+}
