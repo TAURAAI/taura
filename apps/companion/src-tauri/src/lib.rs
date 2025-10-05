@@ -409,24 +409,7 @@ async fn open_file(path: String) -> Result<(), String> {
 }
 
 pub fn run() {
-    #[cfg(not(target_os = "macos"))]
-    let shortcut_str = "Ctrl+Shift+K";
-    #[cfg(target_os = "macos")]
-    let shortcut_str = "Command+Shift+K";
-
-    let shortcut_builder = tauri_plugin_global_shortcut::Builder::new()
-        .with_shortcut(shortcut_str)
-        .expect("register shortcut definition")
-        .with_handler(|app_handle, _shortcut, _event| {
-            let h = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = show_overlay(h).await;
-            });
-        })
-        .build();
-
     tauri::Builder::default()
-        .plugin(shortcut_builder)
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             get_default_folder,
@@ -446,6 +429,54 @@ pub fn run() {
             ensure_fresh_session
         ])
         .setup(|app| {
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            {
+                use tauri_plugin_global_shortcut::ShortcutState;
+
+                let shortcut_str = if cfg!(target_os = "macos") {
+                    "command+shift+k"
+                } else {
+                    "ctrl+shift+k"
+                };
+
+                match tauri_plugin_global_shortcut::Builder::new()
+                    .with_shortcut(shortcut_str)
+                {
+                    Ok(builder) => {
+                        let plugin = builder
+                            .with_handler(|app_handle, _shortcut, event| {
+                                if event.state == ShortcutState::Pressed {
+                                    let handle = app_handle.clone();
+                                    tauri::async_runtime::spawn(async move {
+                                        let _ = show_overlay(handle).await;
+                                    });
+                                }
+                            })
+                            .build();
+
+                        if let Err(err) = app.handle().plugin(plugin) {
+                            if err
+                                .to_string()
+                                .contains("HotKey already registered")
+                            {
+                                log::warn!(
+                                    "Global shortcut {} already registered elsewhere; overlay toggle remains available via UI",
+                                    shortcut_str
+                                );
+                            } else {
+                                return Err(Box::new(err));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Failed to configure global shortcut {}: {}",
+                            shortcut_str,
+                            err
+                        );
+                    }
+                }
+            }
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

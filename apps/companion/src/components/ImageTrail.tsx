@@ -1187,9 +1187,11 @@ const variantMap: Record<number, ImageTrailConstructor> = {
 interface ImageTrailProps {
   items?: string[];
   variant?: number;
+  sizePx?: number; // base tile width
+  filter?: string; // CSS filter for inner image
 }
 
-export default function ImageTrail({ items = [], variant = 1 }: ImageTrailProps): JSX.Element {
+export default function ImageTrail({ items = [], variant = 1, sizePx = 180, filter = 'saturate(115%) brightness(0.9) contrast(110%)' }: ImageTrailProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -1200,15 +1202,16 @@ export default function ImageTrail({ items = [], variant = 1 }: ImageTrailProps)
   }, [variant, items]);
 
   return (
-    <div className="w-full h-full relative z-[100] rounded-lg bg-transparent overflow-visible" ref={containerRef}>
+    <div className="w-full h-full relative z-[10] rounded-lg bg-transparent overflow-visible" ref={containerRef}>
       {items.map((url, i) => (
         <div
-          className="content__img w-[190px] aspect-[1.1] rounded-[15px] absolute top-0 left-0 opacity-0 overflow-hidden [will-change:transform,filter]"
+          className="content__img aspect-[1.1] rounded-[15px] absolute top-0 left-0 opacity-0 overflow-hidden [will-change:transform,filter] shadow-[0_12px_48px_-24px_rgba(0,0,0,0.6)] pointer-events-none"
           key={i}
+          style={{ width: `${sizePx}px` }}
         >
           <div
             className="content__img-inner bg-center bg-cover w-[calc(100%+20px)] h-[calc(100%+20px)] absolute top-[-10px] left-[-10px]"
-            style={{ backgroundImage: `url(${url})` }}
+            style={{ backgroundImage: `url(${url})`, filter }}
           />
         </div>
       ))}

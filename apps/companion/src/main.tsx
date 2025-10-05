@@ -47,8 +47,10 @@ async function initApp() {
   const configState = getConfig()
   const identity = session?.sub || session?.email || configState.userId
   const hasIdentity = Boolean(identity)
-  const initialRoute = hasIdentity ? await getInitialRoute() : '/onboarding/welcome'
-  if (identity) {
+  const routeForLabel = await getInitialRoute()
+  const isOverlay = routeForLabel === '/overlay'
+  const initialRoute = isOverlay ? '/overlay' : (hasIdentity ? routeForLabel : '/onboarding/welcome')
+  if (!isOverlay && identity) {
     initIndexer().catch(err => console.warn('indexer init failed', err))
   }
 

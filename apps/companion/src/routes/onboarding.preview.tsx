@@ -4,15 +4,18 @@ import { OnboardingLayout } from '../ui/OnboardingLayout'
 import Aurora from '../components/backgrounds/Aurora'
 import ImageTrail from '../components/ImageTrail'
 import { invoke } from '@tauri-apps/api/core'
+import { readFile } from '@tauri-apps/plugin-fs'
 import { useEffect, useState } from 'react'
 
 interface ScanItem { path: string; modality: string; size: number; modified?: string | null }
 
 function isImage(path: string, modality?: string) {
-  if (modality && modality.startsWith('image')) return true
+  // Only include formats the webview can display as CSS backgrounds.
   const lower = path.toLowerCase()
-  return /(\.jpg|\.jpeg|\.png|\.gif|\.webp|\.bmp|\.tiff|\.tif|\.heic|\.heif)$/.test(lower)
+  return /(\.jpg|\.jpeg|\.png|\.gif|\.webp|\.bmp)$/.test(lower)
 }
+
+// prefer core.convertFileSrc; fallback handled by API
 
 export const Route = createFileRoute('/onboarding/preview')({
   component: PreviewStep
@@ -39,8 +42,26 @@ function PreviewStep() {
         const items: ScanItem[] = Array.isArray(res?.items) ? res.items : []
         const images = items.filter(it => isImage(it.path, it.modality)).map(i => i.path)
         const shuffled = images.sort(() => Math.random() - 0.5)
-        // Provide enough for animation variety
-        setSamples(shuffled.slice(0, 40).map(p => `file://${p}`))
+        // Read a subset and convert to data URLs to avoid local-scheme restrictions
+        const pick = shuffled.slice(0, 36)
+        const dataUrls: string[] = []
+        for (const p of pick) {
+          try {
+            const bytes = await readFile(p)
+            const mime = p.toLowerCase().endsWith('.png') ? 'image/png' : p.toLowerCase().endsWith('.webp') ? 'image/webp' : p.toLowerCase().endsWith('.gif') ? 'image/gif' : 'image/jpeg'
+            // Convert Uint8Array to base64
+            let binary = ''
+            const chunk = 0x8000
+            for (let i = 0; i < bytes.length; i += chunk) {
+              binary += String.fromCharCode(...bytes.slice(i, i + chunk))
+            }
+            const b64 = btoa(binary)
+            dataUrls.push(`data:${mime};base64,${b64}`)
+          } catch {
+            // ignore file read failures
+          }
+        }
+        setSamples(dataUrls)
       } catch (e) {
         if (!cancelled) setSamples([])
       } finally {
@@ -50,12 +71,6 @@ function PreviewStep() {
     return () => { cancelled = true }
   }, [])
 
-  const steps = [
-    { id: 'welcome', label: 'Account' },
-    { id: 'permissions', label: 'Folder & Mode' },
-    { id: 'preview', label: 'Preview' },
-  ]
-
   function finish() {
     navigate({ to: '/', replace: true })
   }
@@ -63,44 +78,47 @@ function PreviewStep() {
   return (
     <OnboardingLayout
       title="Your recall cockpit"
-      subtitle="Move your cursor to sample how instant visual recall feels. Then launch the overlay and start typing."
-      steps={steps}
-      currentStepId="preview"
+      subtitle="Move your cursor to feel instant visual recall. Then launch the overlay and start typing."
+      steps={[]}
       background={<Aurora speed={0.9} amplitude={1.0} blend={0.5} />}
-      onStepClick={(id) => {
-        if (id === 'permissions') navigate({ to: '/onboarding/permissions' })
-        if (id === 'welcome') navigate({ to: '/onboarding/welcome' })
-      }}
     >
-      <div className="w-full flex flex-col md:flex-row gap-10 items-stretch">
-        <div className="relative flex-1 min-h-[380px] rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center text-xs text-white/50">Scanning preview…</div>
-          )}
-          {!loading && samples.length === 0 && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-xs text-white/50 p-6 text-center">
-              <p>No images detected in selected folder.</p>
-              <button className="btn-outline px-3 py-1 text-xs" onClick={() => navigate({ to: '/onboarding/permissions' })}>Pick another folder</button>
-            </div>
-          )}
-          {samples.length > 0 && <ImageTrail items={samples} variant={7} />}
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#0c0e10] to-transparent" />
-          {rootShown && (
-            <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded bg-black/40 text-white/60 font-mono max-w-[75%] truncate" title={rootShown}>{rootShown}</div>
-          )}
-        </div>
-        <div className="w-full max-w-sm flex flex-col gap-5">
-          <ul className="space-y-3 text-sm text-white/70">
-            <li className="flex gap-3"><span className="h-5 w-5 flex items-center justify-center rounded bg-blue-600/70 text-[11px] font-semibold">1</span><span>Invoke overlay (Cmd/Ctrl+Shift+K) while typing anywhere.</span></li>
-            <li className="flex gap-3"><span className="h-5 w-5 flex items-center justify-center rounded bg-blue-600/70 text-[11px] font-semibold">2</span><span>Describe the memory: "passport renewal june 2022".</span></li>
-            <li className="flex gap-3"><span className="h-5 w-5 flex items-center justify-center rounded bg-blue-600/70 text-[11px] font-semibold">3</span><span>Results stream in under 150ms on average.</span></li>
-            <li className="flex gap-3"><span className="h-5 w-5 flex items-center justify-center rounded bg-blue-600/70 text-[11px] font-semibold">4</span><span>Tap a result to open it instantly.</span></li>
-          </ul>
-          <div className="flex gap-3 pt-2">
-            <button onClick={() => navigate({ to: '/onboarding/permissions' })} className="btn-outline flex-1">Back</button>
-            <button onClick={finish} className="btn-primary flex-1">Enter App</button>
+      <div className="relative w-full h-[72vh] md:h-[80vh] rounded-2xl overflow-hidden bg-white/5 border border-white/10">
+        {/* Visual recall stage */}
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-white/60">Scanning preview…</div>
+        )}
+        {!loading && samples.length === 0 && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-white/70 p-6 text-center">
+            <p>No images detected in the selected folder.</p>
+            <button className="btn-outline px-3 py-1 text-xs" onClick={() => navigate({ to: '/onboarding/permissions' })}>Pick another folder</button>
           </div>
-          <p className="text-[11px] text-white/50">You can revisit these settings anytime under Settings.</p>
+        )}
+        {samples.length > 0 && (
+          <>
+            <ImageTrail items={samples} variant={8} sizePx={150} />
+            {/* cinematic vignettes + copy overlay */}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/10" />
+            <div className="pointer-events-none absolute inset-0" style={{ background: 'radial-gradient(800px 280px at 50% 10%, rgba(0,0,0,0.22), transparent 60%)' }} />
+            <div className="pointer-events-none absolute left-0 right-0 top-0 p-6 md:p-10 text-center">
+              <h2 className="text-2xl md:text-4xl font-semibold tracking-tight">Move your cursor, feel instant recall</h2>
+              <p className="mt-2 text-white/70 max-w-2xl mx-auto">Then press Cmd/Ctrl+Shift+K anywhere and just start typing.</p>
+            </div>
+            <div className="pointer-events-none absolute left-0 right-0 top-1/2 -translate-y-1/2 text-center px-6">
+              <p className="text-white/70 text-sm md:text-base">Your own photos shimmer into view as you explore.</p>
+            </div>
+          </>
+        )}
+        {rootShown && (
+          <div className="absolute top-2 left-2 text-[10px] px-2 py-1 rounded bg-black/40 text-white/60 font-mono max-w-[75%] truncate" title={rootShown}>{rootShown}</div>
+        )}
+
+        {/* CTA bar — lifted above the edge for better visibility */}
+        <div className="absolute inset-x-0 bottom-0 flex items-end justify-center pointer-events-none z-[1000]">
+          <div className="pointer-events-auto mb-6 md:mb-8 inline-flex flex-wrap items-center justify-center gap-3 md:gap-4 px-4 md:px-5 py-3 md:py-4 rounded-xl border border-white/15 bg-black/45 backdrop-blur-md shadow-[0_12px_50px_-20px_rgba(0,0,0,0.7)]">
+            <button onClick={() => navigate({ to: '/onboarding/permissions' })} className="btn-outline">Pick another folder</button>
+            <button onClick={finish} className="btn-primary">Enter App</button>
+            <span className="text-[11px] md:text-xs text-white/70">Change anytime in Settings</span>
+          </div>
         </div>
       </div>
     </OnboardingLayout>
