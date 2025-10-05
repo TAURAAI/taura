@@ -88,7 +88,20 @@ jobs:
             libxdo-dev \
             pkg-config \
             libssl-dev \
-            libayatana-appindicator3-dev || true
+            libayatana-appindicator3-dev \
+          || sudo apt-get install -y \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.0-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev \
+            libx11-dev \
+            libxdo-dev \
+            pkg-config \
+            libssl-dev \
+            libayatana-appindicator3-dev
           pkg-config --libs --cflags glib-2.0 || true
 
       - name: Build Tauri App
