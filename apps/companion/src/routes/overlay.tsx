@@ -124,10 +124,9 @@ function Overlay() {
   }, [activeIdx, results.length])
 
   return (
-    <div className="palette-root" onClick={() => invoke('toggle_overlay').catch(() => {})}>
+    <div className="palette-root">
       <div
         className={`palette-card ${showResults ? 'palette-card--expanded' : ''}`}
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-label="Search your library"

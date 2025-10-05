@@ -219,7 +219,7 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
 @keyframes overlay-fade-in { from { opacity:0; transform:translateY(6px) scale(.985);} to { opacity:1; transform:translateY(0) scale(1);} }
 .animate-overlay-fade { animation: overlay-fade-in 150ms cubic-bezier(.33,.16,.2,1); }
 
-.palette-root { position:relative; inset:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; padding:5vh 0; background: radial-gradient(circle at top, rgba(40,140,255,0.22), transparent 55%); backdrop-filter:blur(16px) saturate(118%); overscroll-behavior: contain; }
+.palette-root { position:relative; inset:0; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; padding:5vh 0; background: transparent; overscroll-behavior: contain; pointer-events: none; }
 
 .palette-card {
   position: relative;
@@ -229,6 +229,7 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
   box-shadow: 0 24px 80px -28px rgba(0,0,0,0.65), 0 10px 32px -18px rgba(0,0,0,0.5);
   overflow: hidden;
   transition: width 220ms ease, max-height 200ms ease;
+  pointer-events: auto;
 }
 
 .palette-card--expanded {
