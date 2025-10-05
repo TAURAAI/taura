@@ -12,6 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as OverlayRouteImport } from './routes/overlay'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as OnboardingWelcomeRouteImport } from './routes/onboarding.welcome'
+import { Route as OnboardingPreviewRouteImport } from './routes/onboarding.preview'
+import { Route as OnboardingPermissionsRouteImport } from './routes/onboarding.permissions'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -28,35 +31,81 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OnboardingWelcomeRoute = OnboardingWelcomeRouteImport.update({
+  id: '/onboarding/welcome',
+  path: '/onboarding/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingPreviewRoute = OnboardingPreviewRouteImport.update({
+  id: '/onboarding/preview',
+  path: '/onboarding/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingPermissionsRoute = OnboardingPermissionsRouteImport.update({
+  id: '/onboarding/permissions',
+  path: '/onboarding/permissions',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/overlay': typeof OverlayRoute
   '/settings': typeof SettingsRoute
+  '/onboarding/permissions': typeof OnboardingPermissionsRoute
+  '/onboarding/preview': typeof OnboardingPreviewRoute
+  '/onboarding/welcome': typeof OnboardingWelcomeRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/overlay': typeof OverlayRoute
   '/settings': typeof SettingsRoute
+  '/onboarding/permissions': typeof OnboardingPermissionsRoute
+  '/onboarding/preview': typeof OnboardingPreviewRoute
+  '/onboarding/welcome': typeof OnboardingWelcomeRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/overlay': typeof OverlayRoute
   '/settings': typeof SettingsRoute
+  '/onboarding/permissions': typeof OnboardingPermissionsRoute
+  '/onboarding/preview': typeof OnboardingPreviewRoute
+  '/onboarding/welcome': typeof OnboardingWelcomeRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/overlay' | '/settings'
+  fullPaths:
+    | '/'
+    | '/overlay'
+    | '/settings'
+    | '/onboarding/permissions'
+    | '/onboarding/preview'
+    | '/onboarding/welcome'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/overlay' | '/settings'
-  id: '__root__' | '/' | '/overlay' | '/settings'
+  to:
+    | '/'
+    | '/overlay'
+    | '/settings'
+    | '/onboarding/permissions'
+    | '/onboarding/preview'
+    | '/onboarding/welcome'
+  id:
+    | '__root__'
+    | '/'
+    | '/overlay'
+    | '/settings'
+    | '/onboarding/permissions'
+    | '/onboarding/preview'
+    | '/onboarding/welcome'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   OverlayRoute: typeof OverlayRoute
   SettingsRoute: typeof SettingsRoute
+  OnboardingPermissionsRoute: typeof OnboardingPermissionsRoute
+  OnboardingPreviewRoute: typeof OnboardingPreviewRoute
+  OnboardingWelcomeRoute: typeof OnboardingWelcomeRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -82,6 +131,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/onboarding/welcome': {
+      id: '/onboarding/welcome'
+      path: '/onboarding/welcome'
+      fullPath: '/onboarding/welcome'
+      preLoaderRoute: typeof OnboardingWelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding/preview': {
+      id: '/onboarding/preview'
+      path: '/onboarding/preview'
+      fullPath: '/onboarding/preview'
+      preLoaderRoute: typeof OnboardingPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding/permissions': {
+      id: '/onboarding/permissions'
+      path: '/onboarding/permissions'
+      fullPath: '/onboarding/permissions'
+      preLoaderRoute: typeof OnboardingPermissionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -89,6 +159,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   OverlayRoute: OverlayRoute,
   SettingsRoute: SettingsRoute,
+  OnboardingPermissionsRoute: OnboardingPermissionsRoute,
+  OnboardingPreviewRoute: OnboardingPreviewRoute,
+  OnboardingWelcomeRoute: OnboardingWelcomeRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

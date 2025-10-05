@@ -7,6 +7,15 @@
     "overlay"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "fs:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$PICTURE/**" },
+        { "path": "$DOCUMENT/**" }
+      ]
+    }
   ]
 }

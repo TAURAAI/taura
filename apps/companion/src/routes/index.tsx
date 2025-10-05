@@ -1,23 +1,102 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState, useEffect } from 'react'
+import { createFileRoute } from '@tanstack/react-router'
+import { useSyncExternalStore, useState, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { AppShell } from '../components/AppShell'
+import { QuickSearch } from '../components/QuickSearch'
+import { RecentItems } from '../components/RecentItems'
+import { fetchStats } from '../api'
+import { useAppConfig } from '../state/config'
+import { indexerStore, setRootPath, startFullScan } from '../indexer'
+import { useAuthContext } from '../state/AuthContext'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
 })
 
+type DashboardStats = {
+  filesIndexed: number
+  totalMedia: number
+  lastIndexed: string | null
+}
+
+function useIndexerState() {
+  return useSyncExternalStore(
+    (onChange) => indexerStore.subscribe(() => onChange()),
+    () => indexerStore.get(),
+  )
+}
+
 function HomeScreen() {
-  const [stats, setStats] = useState({ filesIndexed: 0, lastScan: null as string | null })
+  const idx = useIndexerState()
+  const [stats, setStats] = useState<DashboardStats>({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
   const [serverStatus, setServerStatus] = useState('checking')
+  const uploadState = idx.upload
+  const lastUpload = idx.lastUpload
+  const queueDepth = uploadState ? uploadState.queueDepth : lastUpload?.queueDepth ?? 0
+  const streamSummary = uploadState
+    ? `${uploadState.sent}/${uploadState.queued}`
+    : lastUpload
+    ? `${lastUpload.embeddedSuccess}/${lastUpload.requested}`
+    : '0/0'
+
+  const config = useAppConfig()
+  const { session } = useAuthContext()
+  const overlayEnabled = Boolean(session)
+  const quickActions = [
+    ...(overlayEnabled
+      ? [
+          {
+            title: 'Open Command Overlay',
+            description: 'Launch the universal palette (⌘⌥K) to search photos, PDFs, and transcripts.',
+            icon: (
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <rect x="3" y="3" width="18" height="18" rx="4" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h8" />
+              </svg>
+            ),
+            action: () => invoke('toggle_overlay').catch(() => {}),
+            cta: 'Open overlay',
+          },
+        ]
+      : []),
+    {
+      title: 'Rescan Library',
+      description: 'Trigger a fresh pass over your root folder to catch new or updated media.',
+      icon: (
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v6h6M20 20v-6h-6" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 15a7 7 0 0110-9l4 4M19 9a7 7 0 01-10 9l-4-4" />
+        </svg>
+      ),
+      action: () => startFullScan().catch(() => {}).finally(() => setTimeout(() => loadStats(), 600)),
+      cta: 'Rescan now',
+    },
+    {
+      title: 'Set Root Folder',
+      description: 'Point Taura at the directory you want indexed. Photos and PDFs remain local.',
+      icon: (
+        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 7h4l2-2h6l2 2h4v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
+        </svg>
+      ),
+      action: () => invoke('pick_folder')
+        .then((res: any) => {
+          if (!res) return
+          return setRootPath(String(res)).catch(() => {}).finally(() => setTimeout(() => loadStats(), 1200))
+        })
+        .catch(() => {}),
+      cta: 'Choose folder',
+    },
+  ]
 
   useEffect(() => {
     checkServerStatus()
     loadStats()
-  }, [])
+  }, [config.serverUrl, config.userId])
 
   async function checkServerStatus() {
     try {
-      const response = await fetch('http://localhost:8080/healthz')
+      const response = await fetch(`${config.serverUrl.replace(/\/$/, '')}/healthz`)
       setServerStatus(response.ok ? 'online' : 'offline')
     } catch {
       setServerStatus('offline')
@@ -26,194 +105,112 @@ function HomeScreen() {
 
   async function loadStats() {
     try {
-      const defaultPath = await invoke<string>('get_default_folder')
-      const result = await invoke<{ count: number }>('scan_folder', {
-        path: defaultPath,
-        maxSamples: 0,
-      })
-      setStats({ 
-        filesIndexed: result.count, 
-        lastScan: new Date().toLocaleDateString() 
+      const data = await fetchStats(config.userId)
+      setStats({
+        filesIndexed: data.embedded_count ?? 0,
+        totalMedia: data.media_count ?? 0,
+        lastIndexed: data.last_indexed_at ? new Date(data.last_indexed_at).toLocaleString() : null,
       })
     } catch (e) {
       console.error('Failed to load stats:', e)
-    }
-  }
-
-  async function handleQuickOverlay() {
-    try {
-      await invoke('toggle_overlay')
-    } catch (e) {
-      console.error('Failed to toggle overlay:', e)
+      setStats({ filesIndexed: 0, totalMedia: 0, lastIndexed: null })
     }
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900">
-      <div className="container mx-auto px-6 py-12">
-        
-        <div className="text-center mb-16">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mb-8">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </div>
-          
-          <h1 className="text-6xl font-bold text-white mb-4">
-            Taura
-          </h1>
-          <p className="text-2xl text-blue-200 mb-8">
-            Intelligent File Search & Recall
-          </p>
-          <p className="text-lg text-purple-300 max-w-2xl mx-auto">
-            Search your files using natural language. Find photos, documents, and media 
-            by describing what you're looking for, not just filenames.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Files Indexed</h3>
-              <div className="w-12 h-12 bg-green-500/20 rounded-full flex items-center justify-center">
-                <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+    <AppShell>
+      <div className="home-hero">
+        <div className="hero-card">
+          <div className="hero-content">
+            <div className="hero-label">Semantic Recall</div>
+            <h1 className="hero-title">Find any memory in milliseconds.</h1>
+            <p className="hero-subtitle">Taura watches your folders, embeds media on the GPU, and returns the right photo, PDF page, or transcript as you type.</p>
+            <div className="hero-pills">
+              <span className="hero-pill">
+                <strong>{stats.filesIndexed.toLocaleString()}</strong>
+                <span>Indexed items</span>
+              </span>
+              <span className="hero-pill">
+                <strong className={serverStatus === 'online' ? 'text-emerald-300' : 'text-amber-200'}>{serverStatus}</strong>
+                <span>Gateway</span>
+              </span>
+              <span className="hero-pill">
+                <strong>{config.privacyMode === 'strict-local' ? 'Local only' : 'Hybrid'}</strong>
+                <span>Privacy mode</span>
+              </span>
+            </div>
+            <div className="hero-actions">
+              <button
+                className={`btn-primary ${overlayEnabled ? '' : 'opacity-50 cursor-not-allowed'}`}
+                onClick={() => {
+                  if (!overlayEnabled) return
+                  invoke('toggle_overlay').catch(() => {})
+                }}
+                disabled={!overlayEnabled}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3" />
                 </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white mb-2">
-              {stats.filesIndexed.toLocaleString()}
-            </p>
-            <p className="text-blue-300 text-sm">
-              {stats.lastScan ? `Last scan: ${stats.lastScan}` : 'No scans yet'}
-            </p>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Server Status</h3>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                serverStatus === 'online' ? 'bg-green-500/20' : 
-                serverStatus === 'offline' ? 'bg-red-500/20' : 'bg-yellow-500/20'
-              }`}>
-                <div className={`w-3 h-3 rounded-full ${
-                  serverStatus === 'online' ? 'bg-green-400' : 
-                  serverStatus === 'offline' ? 'bg-red-400' : 'bg-yellow-400'
-                }`} />
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white mb-2 capitalize">
-              {serverStatus}
-            </p>
-            <p className="text-blue-300 text-sm">
-              {serverStatus === 'online' ? 'Ready for search' : 
-               serverStatus === 'offline' ? 'Backend unavailable' : 'Checking connection'}
-            </p>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-md rounded-2xl p-6 border border-white/20">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-semibold text-white">Search Mode</h3>
-              <div className="w-12 h-12 bg-purple-500/20 rounded-full flex items-center justify-center">
-                <svg className="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
-            </div>
-            <p className="text-3xl font-bold text-white mb-2">
-              Semantic
-            </p>
-            <p className="text-blue-300 text-sm">
-              AI-powered understanding
-            </p>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-12">
-          <div className="bg-gradient-to-br from-blue-500/10 to-purple-600/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
-            <div className="flex items-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full flex items-center justify-center mr-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white">Search Overlay</h3>
-                <p className="text-blue-200">Always-on search interface</p>
-              </div>
-            </div>
-            <p className="text-purple-200 mb-6">
-              Access the floating search overlay to quickly find your files while working.
-            </p>
-            <button
-              onClick={handleQuickOverlay}
-              className="w-full bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105"
-            >
-              Open Search Overlay
-            </button>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-500/10 to-emerald-600/10 backdrop-blur-md rounded-2xl p-8 border border-white/20">
-            <div className="flex items-center mb-6">
-              <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-600 rounded-full flex items-center justify-center mr-4">
-                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white">Configuration</h3>
-                <p className="text-green-200">Manage settings & indexing</p>
-              </div>
-            </div>
-            <p className="text-green-200 mb-6">
-              Configure folders to index, manage search settings, and control the indexing process.
-            </p>
-            <Link to="/settings">
-              <button className="w-full bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105">
-                Open Settings
+                Summon overlay
               </button>
-            </Link>
-          </div>
-        </div>
-
-        <div className="text-center mb-8">
-          <h2 className="text-3xl font-bold text-white mb-4">How It Works</h2>
-          <p className="text-blue-200 text-lg mb-8">Taura understands your files like you do</p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
+              <button className="btn-outline" onClick={() => invoke('open_settings_window').catch(() => {})}>Open settings</button>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Smart Indexing</h3>
-            <p className="text-purple-300">Automatically analyzes your photos, documents, and media files</p>
           </div>
-
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-purple-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
+          <div className="hero-stats glass-card">
+            <div>
+              <span className="stat-label">Last embed</span>
+              <div className="stat-value">{stats.lastIndexed || 'pending'}</div>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Natural Language</h3>
-            <p className="text-purple-300">Search by describing what you remember, not exact filenames</p>
-          </div>
-
-          <div className="text-center p-6">
-            <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
+            <div>
+              <span className="stat-label">Total media tracked</span>
+              <div className="stat-value">{stats.totalMedia.toLocaleString()}</div>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Instant Results</h3>
-            <p className="text-purple-300">Get relevant results in milliseconds with AI-powered search</p>
+            <div>
+              <span className="stat-label">Server URL</span>
+              <div className="stat-value text-xs text-white/60 truncate" title={config.serverUrl}>{config.serverUrl}</div>
+            </div>
+            <div>
+              <span className="stat-label">Stream</span>
+              <div className="stat-value text-sm text-white/70">{streamSummary}</div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      <div className="home-grid">
+        <section className="home-left">
+          <div className="section-heading">
+            <h2>Quick actions</h2>
+            <p>Stay in flow with one-tap commands.</p>
+          </div>
+          <div className="action-stack">
+            {quickActions.map((action) => (
+              <button key={action.title} className="action-card" onClick={action.action}>
+                <span className="action-icon">{action.icon}</span>
+                <span className="action-body">
+                  <span className="action-title">{action.title}</span>
+                  <span className="action-subtitle">{action.description}</span>
+                </span>
+                <span className="action-cta">{action.cta}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="section-heading mt-10">
+            <h2>Recent results</h2>
+            <p>Your latest matches across photos and docs.</p>
+          </div>
+          <RecentItems />
+        </section>
+
+        <section className="home-right">
+          <div className="section-heading">
+            <h2>Try it now</h2>
+            <p>Search your library without leaving the desktop.</p>
+          </div>
+          <QuickSearch userId={config.userId} />
+        </section>
+      </div>
+    </AppShell>
   )
 }

@@ -4,8 +4,11 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import { routeTree } from './routeTree.gen'
+import { AuthProvider, bootstrapAuthSession } from './state/AuthContext'
+import { getConfig } from './state/config'
 
 import './styles.css'
+import { initIndexer } from './indexer'
 import reportWebVitals from './reportWebVitals.ts'
 
 const router = createRouter({
@@ -40,8 +43,15 @@ async function getInitialRoute() {
 }
 
 async function initApp() {
-  const initialRoute = await getInitialRoute()
-  
+  const session = await bootstrapAuthSession()
+  const configState = getConfig()
+  const identity = session?.sub || session?.email || configState.userId
+  const hasIdentity = Boolean(identity)
+  const initialRoute = hasIdentity ? await getInitialRoute() : '/onboarding/welcome'
+  if (identity) {
+    initIndexer().catch(err => console.warn('indexer init failed', err))
+  }
+
   await router.navigate({ to: initialRoute })
 
   const rootElement = document.getElementById('app')
@@ -49,7 +59,9 @@ async function initApp() {
     const root = ReactDOM.createRoot(rootElement)
     root.render(
       <StrictMode>
-        <RouterProvider router={router} />
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
       </StrictMode>,
     )
   }
