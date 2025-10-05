@@ -1,0 +1,142 @@
+name: Companion Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (semver) to build (optional override for prerelease)'
+        required: false
+      prerelease:
+        description: 'Mark GitHub Release as pre-release'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            target: ''
+          - os: windows-latest
+            platform: windows
+            target: ''
+          - os: macos-latest
+            platform: macos
+            target: ''
+    env:
+      TAURI_SKIP_UPDATE_CHECK: 'true'
+      # You can set RUSTFLAGS / additional env here if needed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri App
+        working-directory: apps/companion
+        run: pnpm tauri build
+
+      - name: Collect Artifacts (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          dir artifacts
+          mkdir -p artifacts
+          ls -R src-tauri/target/release/bundle
+          cp -v src-tauri/target/release/bundle/appimage/*.AppImage artifacts/ 2>$null || echo 'no appimage'
+          cp -v src-tauri/target/release/bundle/deb/*.deb artifacts/ 2>$null || echo 'no deb'
+          cp -v src-tauri/target/release/bundle/rpm/*.rpm artifacts/ 2>$null || echo 'no rpm'
+          cp -v src-tauri/target/release/bundle/msi/*.msi artifacts/ 2>$null || echo 'no msi (expected)'
+      - name: Collect Artifacts (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Get-ChildItem src-tauri/target/release/bundle -Recurse
+          Copy-Item src-tauri/target/release/bundle/msi/*.msi artifacts -ErrorAction SilentlyContinue
+          Copy-Item src-tauri/target/release/bundle/nsis/*.* artifacts -ErrorAction SilentlyContinue
+        working-directory: apps/companion
+      - name: Collect Artifacts (macOS)
+        if: matrix.platform == 'macos'
+        run: |
+          mkdir -p artifacts
+          ls -R src-tauri/target/release/bundle
+          cp -v src-tauri/target/release/bundle/dmg/*.dmg artifacts/ 2>/dev/null || echo 'no dmg yet'
+          cp -v src-tauri/target/release/bundle/macos/*.app.tar.gz artifacts/ 2>/dev/null || echo 'no app tar'
+        working-directory: apps/companion
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: companion-${{ matrix.platform }}
+          path: apps/companion/artifacts
+          if-no-files-found: warn
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Determine version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Derive from tag (refs/tags/vX.Y.Z)
+            ref="${GITHUB_REF##*/}"
+            echo "version=${ref}" >> $GITHUB_OUTPUT
+          fi
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist-artifacts
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: Taura Companion ${{ steps.ver.outputs.version }}
+          prerelease: ${{ github.event.inputs.prerelease == 'true' || contains(steps.ver.outputs.version, '-rc') }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist-artifacts/**
+
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'

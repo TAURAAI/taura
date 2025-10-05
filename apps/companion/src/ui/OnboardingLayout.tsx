@@ -1,4 +1,4 @@
-import { PropsWithChildren, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 
 interface StepMeta { id: string; label: string }
 
@@ -15,9 +15,8 @@ interface LayoutProps {
 export function OnboardingLayout({ title, subtitle, children, steps = [], currentStepId, onStepClick, background }: LayoutProps) {
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center px-6 py-10 relative overflow-hidden font-sans text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05)_0%,rgba(0,0,0,0.75)_70%)] pointer-events-none" />
-      {background && <div className="absolute inset-0 -z-10 opacity-45">{background}</div>}
-      <div className="relative z-10 w-full max-w-4xl mx-auto flex flex-col gap-10">
+      {background && <div className="absolute inset-0 -z-10 opacity-70">{background}</div>}
+      <div className="relative z-10 w-full max-w-5xl mx-auto flex flex-col gap-10">
         {steps.length > 0 && (
           <nav aria-label="Onboarding progress" className="flex flex-wrap gap-3 justify-center">
             {steps.map((s, i) => {

@@ -11,6 +11,7 @@ export const Route = createFileRoute('/overlay')({
 })
 
 function Overlay() {
+  useEffect(() => { document.title = 'Taura — Overlay' }, [])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [searching, setSearching] = useState(false)
@@ -19,6 +20,8 @@ function Overlay() {
 
   const debounceRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const prevFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
@@ -51,9 +54,13 @@ function Overlay() {
     const prevHtml = (document.documentElement as HTMLElement).style.background
     document.body.style.background = 'transparent'
     ;(document.documentElement as HTMLElement).style.background = 'transparent'
+    // Remember previously focused element to restore on close
+    prevFocusRef.current = (document.activeElement as HTMLElement) || null
     return () => {
       document.body.style.background = prevBody
       ;(document.documentElement as HTMLElement).style.background = prevHtml
+      // Restore focus to previous element
+      try { prevFocusRef.current?.focus() } catch { /* noop */ }
     }
   }, [])
 
@@ -68,6 +75,17 @@ function Overlay() {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         invoke('toggle_overlay').catch(() => {})
+        return
+      }
+      if (e.key === 'Tab') {
+        // Focus trap inside dialog
+        const focusable = Array.from(document.querySelectorAll<HTMLElement>('.palette-card button, .palette-card [href], .palette-card input, .palette-card [tabindex]:not([tabindex="-1"])'))
+        if (focusable.length > 0) {
+          const first = focusable[0]
+          const last = focusable[focusable.length - 1]
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+        }
         return
       }
       if (e.key === 'ArrowDown') {
@@ -97,6 +115,14 @@ function Overlay() {
   const hasQuery = query.trim().length > 0
   const showResults = searching || hasQuery || results.length > 0
 
+  // Keep focus synced to active option for screen readers and keyboard users
+  useEffect(() => {
+    const listEl = listRef.current
+    if (!listEl) return
+    const active = listEl.querySelector<HTMLElement>(`[data-index="${activeIdx}"]`)
+    if (active) active.focus()
+  }, [activeIdx, results.length])
+
   return (
     <div className="palette-root" onClick={() => invoke('toggle_overlay').catch(() => {})}>
       <div
@@ -104,6 +130,7 @@ function Overlay() {
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
+        aria-label="Search your library"
       >
         <div className="palette-input">
           <div className="palette-icon">
@@ -118,6 +145,8 @@ function Overlay() {
             placeholder="Search photos, PDFs…"
             className="palette-input-field"
             autoFocus
+            aria-label="Search input"
+            onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx(0) } }}
           />
           <div className="palette-keycaps">
             <span>Ctrl</span>
@@ -126,7 +155,7 @@ function Overlay() {
           </div>
         </div>
 
-        <div className={`palette-results ${showResults ? 'palette-results--open' : ''}`}>
+        <div className={`palette-results ${showResults ? 'palette-results--open' : ''}`} aria-live="polite">
           {searching && (
             <div className="palette-placeholder">
               <div className="palette-spinner" />
@@ -143,13 +172,19 @@ function Overlay() {
           )}
 
           {!searching && results.length > 0 && (
-            <ul className="palette-list">
+            <ul className="palette-list" role="listbox" aria-label="Search results" ref={listRef} aria-activedescendant={results[activeIdx] ? `result-${activeIdx}` : undefined}>
               {results.map((r, i) => (
                 <li
+                  id={`result-${i}`}
                   key={r.media_id}
+                  role="option"
+                  aria-selected={i === activeIdx}
+                  tabIndex={i === activeIdx ? 0 : -1}
+                  data-index={i}
                   className={`palette-row ${i === activeIdx ? 'palette-row--active' : ''}`}
                   onMouseDown={(e) => e.preventDefault()}
                   onMouseEnter={() => setActiveIdx(i)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); invoke('open_file', { path: r.uri }).then(() => inputRef.current?.focus()).catch(()=>{}) } }}
                   onClick={async () => {
                     try {
                       await invoke('open_file', { path: r.uri })
