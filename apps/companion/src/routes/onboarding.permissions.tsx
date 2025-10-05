@@ -1,7 +1,7 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useState } from 'react'
-import { useAuth } from '../state/auth'
+import { useAuthContext } from '../state/AuthContext'
 import { useAppConfig, updateConfig } from '../state/config'
 import { OnboardingLayout } from '../ui/OnboardingLayout'
 import Prism from '../components/backgrounds/Prism'
@@ -11,7 +11,7 @@ export const Route = createFileRoute('/onboarding/permissions')({
 })
 
 function Permissions() {
-  const { session } = useAuth()
+  const { session } = useAuthContext()
   const cfg = useAppConfig()
   const navigate = useNavigate()
   if (!session) throw redirect({ to: '/onboarding/welcome' })

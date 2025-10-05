@@ -328,6 +328,9 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<SyncResu
 
 #[tauri::command]
 async fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
+    if !ensure_authenticated(&app).await? {
+        return Err("not authenticated".into());
+    }
     if let Some(overlay_window) = app.get_webview_window("overlay") {
         overlay_window.show().map_err(|e| e.to_string())?;
         overlay_window.set_focus().map_err(|e| e.to_string())?;
@@ -343,6 +346,9 @@ async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
         if overlay_window.is_visible().map_err(|e| e.to_string())? {
             overlay_window.hide().map_err(|e| e.to_string())?;
         } else {
+            if !ensure_authenticated(&app).await? {
+                return Err("not authenticated".into());
+            }
             overlay_window.show().map_err(|e| e.to_string())?;
             overlay_window.set_focus().map_err(|e| e.to_string())?;
             // Emit the toggle-overlay event to focus the input
@@ -350,6 +356,18 @@ async fn toggle_overlay(app: tauri::AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+async fn ensure_authenticated(app: &tauri::AppHandle) -> Result<bool, String> {
+    let session = get_session(app.clone()).await?;
+    if session.is_some() {
+        return Ok(true);
+    }
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.show();
+        let _ = main_window.set_focus();
+    }
+    Ok(false)
 }
 
 #[tauri::command]
@@ -421,6 +439,7 @@ pub fn run() {
             toggle_overlay,
             show_main_window,
             open_file,
+            resize_overlay,
             google_auth_start,
             get_session,
             logout,

@@ -4,7 +4,7 @@ import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import { routeTree } from './routeTree.gen'
-import { loadSession } from './state/auth'
+import { AuthProvider, bootstrapAuthSession } from './state/AuthContext'
 import { getConfig } from './state/config'
 
 import './styles.css'
@@ -43,7 +43,7 @@ async function getInitialRoute() {
 }
 
 async function initApp() {
-  const session = await loadSession()
+  const session = await bootstrapAuthSession()
   const configState = getConfig()
   const identity = session?.sub || session?.email || configState.userId
   const hasIdentity = Boolean(identity)
@@ -59,7 +59,9 @@ async function initApp() {
     const root = ReactDOM.createRoot(rootElement)
     root.render(
       <StrictMode>
-        <RouterProvider router={router} />
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
       </StrictMode>,
     )
   }

@@ -37,6 +37,7 @@ export interface IndexerState {
   rootPath: string | null
   phase: IndexerPhase
   pendingRoot?: string | null
+  serverOnline?: boolean // soft signal; undefined = unknown
   scan: {
     processed: number
     total: number
@@ -131,6 +132,39 @@ let totalPlanned = 0
 let sentCount = 0
 let processedBatches = 0
 let aggregateTotals: UploadAggregate = resetAggregate()
+
+// ---- Connectivity gating ----
+let lastOnlineCheck = 0
+let cachedOnline: boolean | null = null
+const ONLINE_CACHE_MS = 12_000 // re-evaluate at most every 12s
+const OFFLINE_BACKOFF_MS = 5_000
+
+async function checkServerOnline(base: string): Promise<boolean> {
+  const now = Date.now()
+  if (cachedOnline !== null && (now - lastOnlineCheck) < ONLINE_CACHE_MS) {
+    return cachedOnline
+  }
+  lastOnlineCheck = now
+  // Normalize base
+  const url = base.replace(/\/$/, '')
+  const probes = [ '/healthz', '/stats', '/' ]
+  for (const p of probes) {
+    try {
+      const controller = new AbortController()
+      const t = setTimeout(() => controller.abort(), 2500)
+      const resp = await fetch(url + p, { method: 'GET', mode: 'cors', signal: controller.signal })
+      clearTimeout(t)
+      if (resp.ok) {
+        cachedOnline = true
+        indexerStore.patch({ serverOnline: true })
+        return true
+      }
+    } catch { /* swallow */ }
+  }
+  cachedOnline = false
+  indexerStore.patch({ serverOnline: false })
+  return false
+}
 
 function resetAggregate(): UploadAggregate {
   return {
@@ -320,28 +354,61 @@ async function uploadWorkerLoop(): Promise<void> {
   uploading = true
   try {
     while (uploadQueue.length) {
-      const chunk = uploadQueue.splice(0, STREAM_CHUNK_SIZE)
-      const { payloadItems, localReadErrors } = await prepareStreamPayload(chunk)
-
+      // Peek chunk (don't splice until we know we're online and have server URL)
+      const nextChunkSize = Math.min(STREAM_CHUNK_SIZE, uploadQueue.length)
+      const previewChunk = uploadQueue.slice(0, nextChunkSize)
       const serverUrlRaw = (currentConfig.serverUrl || '').trim().replace(/\/$/, '')
       if (!serverUrlRaw) {
         aggregateTotals.embedErrors.push({ uri: 'batch', error: 'server URL missing' })
-        aggregateTotals.embeddedFailed += chunk.length
-        aggregateTotals.requested += chunk.length
+        aggregateTotals.embeddedFailed += previewChunk.length
+        aggregateTotals.requested += previewChunk.length
         aggregateTotals.queueDepth = uploadQueue.length
-        sentCount += chunk.length
+        sentCount += previewChunk.length
         processedBatches += 1
         aggregateTotals.chunksProcessed += 1
+        // Drop these items since we cannot send them meaningfully; user can re-scan after setting server.
+        uploadQueue.splice(0, nextChunkSize)
         applyUploadSnapshot()
         continue
       }
+
+      // Check connectivity BEFORE we spend time reading files or removing from queue.
+      const online = await checkServerOnline(serverUrlRaw)
+      if (!online) {
+        // Soft pause: don't dequeue yet, just wait and retry later.
+        // Provide a gentle pulse update so UI can reflect paused state without an error.
+        indexerStore.patchNested(s => { if (s.phase === 'uploading') { /* keep uploading label */ } })
+        await delay(OFFLINE_BACKOFF_MS)
+        continue
+      }
+
+  const chunk = uploadQueue.splice(0, STREAM_CHUNK_SIZE)
+      const { payloadItems, localReadErrors } = await prepareStreamPayload(chunk)
 
       let result: SyncResult | null = null
       if (payloadItems.length) {
         try {
           result = await sendStreamChunk(serverUrlRaw, payloadItems)
         } catch (err) {
-          console.warn('stream chunk failed', err)
+          // If we get a network-style failure, mark offline & requeue once rather than cascading errors.
+          if (err instanceof Error && (err.message.includes('Network') || err.message.includes('fetch') || err.message.includes('ECONN') || err.message.includes('Failed to fetch'))) {
+            cachedOnline = false
+            indexerStore.patch({ serverOnline: false })
+            // Requeue the chunk (if not already retried too many times)
+            let requeued = false
+            for (const item of chunk) {
+              const retries = ((item as any).__retry ?? 0) + 1
+              ;(item as any).__retry = retries
+              if (retries <= STREAM_REQUEUE_LIMIT) requeued = true
+            }
+            if (requeued) {
+              uploadQueue.unshift(...chunk)
+              await delay(OFFLINE_BACKOFF_MS)
+              continue
+            }
+          } else {
+            console.warn('stream chunk failed', err)
+          }
           let requeued = false
           for (const item of chunk) {
             const retries = ((item as any).__retry ?? 0) + 1
@@ -488,7 +555,10 @@ function finalizeUploadAggregate() {
       chunksProcessed: summary.chunksProcessed,
     }
     if (summary.embeddedFailed > 0 || summary.readErrors.length > 0) {
-      s.error = `Sync incomplete: ${summary.embeddedFailed} embed failures, ${summary.readErrors.length} read errors`
+      // Only surface if online; if offline we keep silent experience.
+      if (s.serverOnline !== false) {
+        s.error = `Sync incomplete: ${summary.embeddedFailed} embed failures, ${summary.readErrors.length} read errors`
+      }
     } else if (s.error && s.error.startsWith('Sync incomplete')) {
       s.error = undefined
     }

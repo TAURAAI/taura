@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '../state/auth'
+import { useAuthContext } from '../state/AuthContext'
 import { OnboardingLayout } from '../ui/OnboardingLayout'
 import { GoogleSignInButton } from '../ui/GoogleSignInButton'
 import Prism from '../components/backgrounds/Prism'
@@ -9,7 +9,7 @@ export const Route = createFileRoute('/onboarding/welcome')({
 })
 
 function Welcome() {
-  const { session } = useAuth()
+  const { session } = useAuthContext()
   const navigate = useNavigate()
   if (session) {
     navigate({ to: '/onboarding/permissions', replace: true })
@@ -32,7 +32,6 @@ function Welcome() {
     >
       <div className="w-full max-w-sm mx-auto flex flex-col items-center gap-5">
         <GoogleSignInButton />
-        <p className="text-[11px] text-white/55 text-center leading-relaxed">Only basic profile + email. No Drive access. Tokens stored locally & revocable anytime.</p>
       </div>
     </OnboardingLayout>
   )

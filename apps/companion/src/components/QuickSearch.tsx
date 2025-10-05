@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { search, type SearchResultItem } from '../api'
 import { invoke } from '@tauri-apps/api/core'
 import { useAppConfig } from '../state/config'
+import { useAuthContext } from '../state/AuthContext'
 
 interface QuickSearchProps {
   userId?: string
@@ -10,6 +11,8 @@ interface QuickSearchProps {
 
 export function QuickSearch({ userId, onResults }: QuickSearchProps) {
   const config = useAppConfig()
+  const { session } = useAuthContext()
+  const overlayEnabled = Boolean(session)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -37,7 +40,17 @@ export function QuickSearch({ userId, onResults }: QuickSearchProps) {
     <div className="glass-card quick-search-card p-5 flex flex-col gap-4" aria-labelledby="quick-search-heading">
       <div className="flex items-center justify-between">
         <h2 id="quick-search-heading" className="text-base font-medium text-white">Quick Search</h2>
-        <button onClick={() => invoke('toggle_overlay').catch(()=>{})} className="text-[11px] px-2 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition">Open Overlay</button>
+        <button
+          type="button"
+          onClick={() => {
+            if (!overlayEnabled) return
+            invoke('toggle_overlay').catch(()=>{})
+          }}
+          disabled={!overlayEnabled}
+          className={`text-[11px] px-2 py-1 rounded border border-white/10 transition bg-white/5 ${overlayEnabled ? 'hover:bg-white/10' : 'opacity-40 cursor-not-allowed'}`}
+        >
+          Open Overlay
+        </button>
       </div>
       <div>
         <input

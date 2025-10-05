@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { indexerStore, setRootPath, startFullScan, stopScan } from '../indexer'
 import { AppShell } from '../components/AppShell'
 import { useAppConfig, updateConfig } from '../state/config'
-import { useAuth } from '../state/auth'
+import { useAuthContext } from '../state/AuthContext'
 
 export const Route = createFileRoute('/settings')({
   component: SettingsApp,
@@ -22,7 +22,7 @@ function useIndexerState() {
 function SettingsApp() {
   const idx = useIndexerState()
   const config = useAppConfig()
-  const auth = useAuth()
+  const auth = useAuthContext()
   const [configDraft, setConfigDraft] = useState<{ serverUrl: string; userId: string; privacyMode: PrivacyMode }>({
     serverUrl: config.serverUrl,
     userId: (config.userId || auth.session?.sub || auth.session?.email || ""),
@@ -96,10 +96,10 @@ function SettingsApp() {
     ? `${lastUpload.embeddedSuccess}/${lastUpload.requested}`
     : '0/0'
   const streamStatus = streaming
-    ? 'Streaming to embedder'
+    ? (idx.serverOnline === false ? 'Paused (offline)' : 'Streaming to embedder')
     : queueDepth
-    ? 'Awaiting GPU capacity'
-    : 'Queue idle'
+    ? (idx.serverOnline === false ? 'Holding queue (offline)' : 'Awaiting GPU capacity')
+    : (idx.serverOnline === false ? 'Idle (offline)' : 'Queue idle')
   const streamDetail = streaming
     ? `Chunks processed: ${chunksProcessed}`
     : lastUpload
@@ -127,6 +127,10 @@ function SettingsApp() {
   }
 
   async function handleShowOverlay() {
+    if (!auth.session) {
+      console.warn('Overlay requires authentication')
+      return
+    }
     try {
       await invoke('toggle_overlay')
     } catch (err) {
@@ -289,10 +293,10 @@ function SettingsApp() {
         <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/30 md:col-span-2">
           <div className="mb-4">
             <h2 className="text-base font-semibold text-white">Server & privacy</h2>
-            <p className="text-xs text-slate-400">Adjust connection settings and scan pacing.</p>
-            {auth.session?.email && (
-              <p className="mt-2 text-xs text-indigo-200">Signed in as <span className="font-medium text-white">{auth.session.email}</span></p>
-            )}
+            <p className="text-xs text-slate-400">Adjust connection settings and scan pacing.{idx.serverOnline === false && ' (offline – syncing will resume silently)'}</p>
+                  {auth.session?.email && (
+                    <p className="mt-2 text-xs text-indigo-200">Signed in as <span className="font-medium text-white">{auth.session.email}</span></p>
+                  )}
           </div>
 
           <div className="grid gap-4 md:grid-cols-3">
@@ -333,8 +337,10 @@ function SettingsApp() {
                   onBlur={handleUserBlur}
                   placeholder="you@example.com"
                   autoComplete="off"
-                  className="w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                  disabled={!!auth.session}
+                  className={`w-full rounded-lg border border-white/10 bg-slate-950/70 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-400 ${auth.session ? 'opacity-60 cursor-not-allowed' : ''}`}
                 />
+                {auth.session && <span className="text-[10px] text-slate-500">Managed from your OAuth identity; logout to change manually.</span>}
               </label>
             </form>
           </div>

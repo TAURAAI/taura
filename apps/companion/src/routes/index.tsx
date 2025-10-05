@@ -7,6 +7,7 @@ import { RecentItems } from '../components/RecentItems'
 import { fetchStats } from '../api'
 import { useAppConfig } from '../state/config'
 import { indexerStore, setRootPath, startFullScan } from '../indexer'
+import { useAuthContext } from '../state/AuthContext'
 
 export const Route = createFileRoute('/')({ 
   component: HomeScreen,
@@ -39,19 +40,25 @@ function HomeScreen() {
     : '0/0'
 
   const config = useAppConfig()
+  const { session } = useAuthContext()
+  const overlayEnabled = Boolean(session)
   const quickActions = [
-    {
-      title: 'Open Command Overlay',
-      description: 'Launch the universal palette (⌘⌥K) to search photos, PDFs, and transcripts.',
-      icon: (
-        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
-          <rect x="3" y="3" width="18" height="18" rx="4" />
-          <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h8" />
-        </svg>
-      ),
-      action: () => invoke('toggle_overlay').catch(() => {}),
-      cta: 'Open overlay',
-    },
+    ...(overlayEnabled
+      ? [
+          {
+            title: 'Open Command Overlay',
+            description: 'Launch the universal palette (⌘⌥K) to search photos, PDFs, and transcripts.',
+            icon: (
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
+                <rect x="3" y="3" width="18" height="18" rx="4" />
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h8" />
+              </svg>
+            ),
+            action: () => invoke('toggle_overlay').catch(() => {}),
+            cta: 'Open overlay',
+          },
+        ]
+      : []),
     {
       title: 'Rescan Library',
       description: 'Trigger a fresh pass over your root folder to catch new or updated media.',
@@ -133,7 +140,14 @@ function HomeScreen() {
               </span>
             </div>
             <div className="hero-actions">
-              <button className="btn-primary" onClick={() => invoke('toggle_overlay').catch(() => {})}>
+              <button
+                className={`btn-primary ${overlayEnabled ? '' : 'opacity-50 cursor-not-allowed'}`}
+                onClick={() => {
+                  if (!overlayEnabled) return
+                  invoke('toggle_overlay').catch(() => {})
+                }}
+                disabled={!overlayEnabled}
+              >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3" />
                 </svg>

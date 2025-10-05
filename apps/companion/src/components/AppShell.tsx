@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 import { useEffect, useState, useCallback } from 'react'
 import type { PropsWithChildren, ReactNode } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { useAuthContext } from '../state/AuthContext'
 
 export type NavItem = { label: string; to: string; icon: ReactNode }
 
@@ -20,6 +21,8 @@ const nav: NavItem[] = [
 export function AppShell({ children, footer }: PropsWithChildren<{ footer?: ReactNode }>) {
   const location = useRouterState({ select: (s) => s.location.pathname })
   const isActive = (path: string) => location === path
+  const { session } = useAuthContext()
+  const overlayEnabled = Boolean(session)
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try { return localStorage.getItem('taura.sidebar.collapsed') === '1' } catch { return false }
   })
@@ -84,8 +87,12 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
         <div className="sidebar-footer">
           <button
             type="button"
-            className="footer-command"
-            onClick={() => invoke('toggle_overlay').catch(() => {})}
+            className={`footer-command ${overlayEnabled ? '' : 'opacity-40 cursor-not-allowed'}`}
+            onClick={() => {
+              if (!overlayEnabled) return
+              invoke('toggle_overlay').catch(() => {})
+            }}
+            disabled={!overlayEnabled}
             aria-label="Open Command Palette"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8}>

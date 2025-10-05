@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { loginWithGoogle, useAuth } from '../state/auth'
+import { useAuthContext } from '../state/AuthContext'
 
 const CLIENT_ID_KEY = 'TAURA_GOOGLE_CLIENT_ID'
 
 export function GoogleSignInButton() {
-  const { loading } = useAuth()
+  const { loading, loginWithGoogle } = useAuthContext()
   const [err, setErr] = useState<string | null>(null)
   const clientId = import.meta.env?.[`VITE_${CLIENT_ID_KEY}`] || (window as any)[CLIENT_ID_KEY] || ''
   const clientSecret = (import.meta as any).env?.VITE_TAURA_GOOGLE_CLIENT_SECRET || (window as any).TAURA_GOOGLE_CLIENT_SECRET || ''

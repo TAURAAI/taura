@@ -1,5 +1,5 @@
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useAuth } from '../state/auth'
+import { useAuthContext } from '../state/AuthContext'
 import { OnboardingLayout } from '../ui/OnboardingLayout'
 import Prism from '../components/backgrounds/Prism'
 import ImageTrail from '../components/ImageTrail'
@@ -21,7 +21,7 @@ export const Route = createFileRoute('/onboarding/preview')({
 })
 
 function PreviewStep() {
-  const { session } = useAuth()
+  const { session } = useAuthContext()
   const navigate = useNavigate()
   if (!session) throw redirect({ to: '/onboarding/welcome' })
 
