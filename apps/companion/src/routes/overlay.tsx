@@ -1,10 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import { search } from '../api'
 import type { SearchResultItem } from '../api'
 import { useAppConfig } from '../state/config'
+import { useAuthContext } from '../state/AuthContext'
 
 export const Route = createFileRoute('/overlay')({
   component: Overlay,
@@ -16,25 +17,23 @@ function Overlay() {
   const [results, setResults] = useState<SearchResultItem[]>([])
   const [searching, setSearching] = useState(false)
   const [activeIdx, setActiveIdx] = useState(0)
-  const { userId } = useAppConfig()
+  const { userId: configUserId } = useAppConfig()
+  const { userId: authUserId, session, loading: authLoading } = useAuthContext()
+  const effectiveUserId = authUserId || configUserId || ''
 
   const debounceRef = useRef<number | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const listRef = useRef<HTMLUListElement | null>(null)
   const prevFocusRef = useRef<HTMLElement | null>(null)
 
-  useEffect(() => {
+  const runSearch = useCallback(() => {
     if (debounceRef.current) window.clearTimeout(debounceRef.current)
-
-    if (!query.trim()) {
-      setResults([])
-      return
-    }
-
+    if (!query.trim()) { setResults([]); return }
+    if (!effectiveUserId) { setResults([]); return }
     debounceRef.current = window.setTimeout(async () => {
       try {
         setSearching(true)
-        const data = await search(userId, query, 8, {})
+        const data = await search(effectiveUserId, query, 8, {})
         setResults(data)
       } catch (err) {
         console.error('overlay search error', err)
@@ -43,11 +42,12 @@ function Overlay() {
         setSearching(false)
       }
     }, 220)
+  }, [query, effectiveUserId])
 
-    return () => {
-      if (debounceRef.current) window.clearTimeout(debounceRef.current)
-    }
-  }, [query, userId])
+  useEffect(() => {
+    runSearch()
+    return () => { if (debounceRef.current) window.clearTimeout(debounceRef.current) }
+  }, [runSearch])
 
   useEffect(() => {
     const prevBody = document.body.style.background
@@ -113,7 +113,8 @@ function Overlay() {
   }, [results, activeIdx])
 
   const hasQuery = query.trim().length > 0
-  const showResults = searching || hasQuery || results.length > 0
+  const unauthenticated = !authLoading && !session && !effectiveUserId
+  const showResults = !unauthenticated && (searching || hasQuery || results.length > 0)
 
   // Keep focus synced to active option for screen readers and keyboard users
   useEffect(() => {
@@ -162,15 +163,22 @@ function Overlay() {
             </div>
           )}
 
-          {!searching && results.length === 0 && hasQuery && (
+          {!unauthenticated && !searching && results.length === 0 && hasQuery && (
             <div className="palette-placeholder">No results for “{query}”</div>
           )}
 
-          {!searching && results.length === 0 && !hasQuery && (
+          {!unauthenticated && !searching && results.length === 0 && !hasQuery && (
             <div className="palette-placeholder">Type to search your indexed media</div>
           )}
 
-          {!searching && results.length > 0 && (
+          {unauthenticated && (
+            <div className="palette-placeholder">
+              <p className="mb-2">Sign in to start searching.</p>
+              <p className="text-xs opacity-70">Open the main window to authenticate.</p>
+            </div>
+          )}
+
+          {!unauthenticated && !searching && results.length > 0 && (
             <ul className="palette-list" role="listbox" aria-label="Search results" ref={listRef} aria-activedescendant={results[activeIdx] ? `result-${activeIdx}` : undefined}>
               {results.map((r, i) => (
                 <li
