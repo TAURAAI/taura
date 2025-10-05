@@ -22,6 +22,20 @@ Find any photo, PDF page, or document in milliseconds while you type.
 ## Overview
 Taura combines multi-modal embeddings with time and place heuristics to surface the exact media you are thinking of - directly from any text box (overlay) or the desktop companion. Taura also has a keyboard built in Kotlin for Android, which is still a WIP.
 
+<p align="center">
+  <video
+    src="https://github.com/TAURAAI/taura/raw/main/TAURA.mp4"
+    controls
+    loop
+    muted
+    playsinline
+    width="860"
+  >
+  </video>
+  <br />
+  <a href="https://github.com/TAURAAI/taura/blob/main/TAURA.mp4">Watch the demo video ↗</a>
+</p>
+
 ## 🔍 Current Status (Oct 2025)
 | Area | Status | Notes |
 |------|--------|-------|
