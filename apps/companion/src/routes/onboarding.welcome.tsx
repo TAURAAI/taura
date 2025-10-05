@@ -3,7 +3,6 @@ import { useAuthContext } from '../state/AuthContext'
 import { GoogleSignInButton } from '../ui/GoogleSignInButton'
 import ScrollImageSequence from '../components/ScrollImageSequence'
 import Aurora from '../components/backgrounds/Aurora'
-// no extra hooks needed
 
 export const Route = createFileRoute('/onboarding/welcome')({
   component: Welcome
@@ -53,9 +52,8 @@ function Welcome() {
             </div>
           </div>
         }
-        endAppearAt={0.95}
+        endAppearAt={0.85}
       />
-      {/* No separate section; the end overlay includes the sign-in content in the same div */}
     </div>
   )
 }

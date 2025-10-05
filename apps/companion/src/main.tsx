@@ -43,11 +43,17 @@ async function getInitialRoute() {
 }
 
 async function initApp() {
+  const progress = (p: number) => {
+    window.dispatchEvent(new CustomEvent('app-progress', { detail: { p } }))
+  }
+  progress(0.05) // start
   const session = await bootstrapAuthSession()
+  progress(0.25)
   const configState = getConfig()
   const identity = session?.sub || session?.email || configState.userId
   const hasIdentity = Boolean(identity)
   const routeForLabel = await getInitialRoute()
+  progress(0.4)
   const isOverlay = routeForLabel === '/overlay'
   const initialRoute = isOverlay ? '/overlay' : (hasIdentity ? routeForLabel : '/onboarding/welcome')
   if (!isOverlay && identity) {
@@ -55,6 +61,7 @@ async function initApp() {
   }
 
   await router.navigate({ to: initialRoute })
+  progress(0.55)
 
   const rootElement = document.getElementById('app')
   if (rootElement && !rootElement.innerHTML) {
@@ -67,6 +74,25 @@ async function initApp() {
       </StrictMode>,
     )
   }
+  progress(0.7)
+
+  try {
+    const manifestRes = await fetch('/sequence/manifest.json', { cache: 'no-store' })
+    if (manifestRes.ok) {
+      const m = await manifestRes.json()
+      const first = `${(m.dir || '/sequence').replace(/\/$/, '')}/${m.base || 'aurora-'}${String(1).padStart(m.pad || 3, '0')}${m.ext || '.jpg'}`
+      const img = new Image()
+      img.src = first
+    }
+  } catch (e) {
+    /* ignore */
+  }
+  progress(0.9)
+
+  requestAnimationFrame(() => {
+    progress(1)
+    window.dispatchEvent(new CustomEvent('app-ready'))
+  })
 }
 
 initApp().catch(console.error)
