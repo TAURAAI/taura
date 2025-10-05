@@ -147,7 +147,8 @@ async function checkServerOnline(base: string): Promise<boolean> {
   lastOnlineCheck = now
   // Normalize base
   const url = base.replace(/\/$/, '')
-  const probes = [ '/healthz', '/stats', '/' ]
+  const hasUser = !!(currentConfig.userId && currentConfig.userId.trim())
+  const probes = hasUser ? [ '/healthz', '/stats', '/' ] : [ '/healthz', '/' ]
   for (const p of probes) {
     try {
       const controller = new AbortController()

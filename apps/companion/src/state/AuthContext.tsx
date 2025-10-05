@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { updateConfig, getConfig, getApiBase } from './config'
+import { fetchStats } from '../api'
+import type { StatsResponse } from '../api'
 import { initIndexer } from '../indexer'
 
 // ---------------------- Types ----------------------
@@ -21,6 +23,7 @@ interface InternalState {
   session: Session | null
   loading: boolean
   error?: string | null
+  stats?: StatsResponse | null
 }
 
 /**
@@ -32,6 +35,7 @@ export interface AuthContextValue {
   userId: string | null
   loading: boolean
   error?: string | null
+  stats: StatsResponse | null | undefined
   loginWithGoogle: (clientId: string) => Promise<Session | null>
   logout: () => Promise<void>
   ensureFresh: () => Promise<Session | null>
@@ -41,7 +45,7 @@ export interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, setState] = useState<InternalState>(() => ({ session: preloadedSession, loading: !preloadedSession }))
+  const [state, setState] = useState<InternalState>(() => ({ session: preloadedSession, loading: !preloadedSession, stats: undefined }))
   const refreshTimer = useRef<any>(null)
 
   // Initial load if not preloaded
@@ -55,10 +59,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (sess) {
           syncConfig(sess)
           scheduleRefresh(sess)
-          setState({ session: sess, loading: false })
+          setState({ session: sess, loading: false, stats: undefined })
           initIndexer().catch(() => {})
         } else {
-          setState({ session: null, loading: false })
+          setState({ session: null, loading: false, stats: null })
         }
       } catch (e: any) {
         if (!cancelled) setState({ session: null, loading: false, error: String(e) })
@@ -106,7 +110,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const sess = res.session
       syncConfig(sess)
       scheduleRefresh(sess)
-      setState({ session: sess, loading: false })
+  setState({ session: sess, loading: false, stats: undefined })
       // Gateway verify + upsert
       try {
         if (sess.id_token) {
@@ -126,7 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   async function logout() {
     try { await invoke('logout') } catch {}
     clearTimer()
-    setState({ session: null, loading: false })
+  setState({ session: null, loading: false, stats: null })
     updateConfig({ userId: '' })
   }
 
@@ -163,11 +167,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     userId,
     loading: state.loading,
     error: state.error,
+    stats: state.stats,
     loginWithGoogle,
     logout,
     ensureFresh,
     getAccessToken,
-  }), [state.session, state.loading, state.error, userId])
+  }), [state.session, state.loading, state.error, userId, state.stats])
 
   // Keep config.userId in sync (legacy consumers); only write when it changes.
   useEffect(() => {
@@ -175,6 +180,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cfg = getConfig()
     if (cfg.userId !== userId) updateConfig({ userId })
   }, [userId])
+
+  // Post-auth stats fetch & periodic refresh
+  useEffect(() => {
+    let cancelled = false
+    if (!userId || !state.session) {
+      if (!userId) setState(s => ({ ...s, stats: null }))
+      return
+    }
+    ;(async () => {
+      const stats = await fetchStats(userId).catch(() => null)
+      if (!cancelled) setState(s => ({ ...s, stats }))
+    })()
+    const interval = setInterval(() => {
+      if (!userId) return
+      fetchStats(userId).then(st => { if (!cancelled) setState(s => ({ ...s, stats: st })) }).catch(() => {})
+    }, 60_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [userId, state.session])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
