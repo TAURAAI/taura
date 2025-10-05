@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react'
 
 interface ScanItem { path: string; modality: string; size: number; modified?: string | null }
 
-function isImage(path: string, modality?: string) {
+function isImage(path: string) {
   // Only include formats the webview can display as CSS backgrounds.
   const lower = path.toLowerCase()
   return /(\.jpg|\.jpeg|\.png|\.gif|\.webp|\.bmp)$/.test(lower)
@@ -40,7 +40,7 @@ function PreviewStep() {
         const res: any = await invoke('scan_folder', { path: root, maxSamples: 200, throttleMs: 0 })
         if (cancelled) return
         const items: ScanItem[] = Array.isArray(res?.items) ? res.items : []
-        const images = items.filter(it => isImage(it.path, it.modality)).map(i => i.path)
+        const images = items.filter(it => isImage(it.path)).map(i => i.path)
         const shuffled = images.sort(() => Math.random() - 0.5)
         // Read a subset and convert to data URLs to avoid local-scheme restrictions
         const pick = shuffled.slice(0, 36)
