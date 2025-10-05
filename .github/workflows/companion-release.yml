@@ -68,6 +68,24 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Linux system deps (Tauri)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev \
+            libx11-dev \
+            libxdo-dev \
+            pkg-config \
+            libssl-dev \
+            libayatana-appindicator3-dev || true
+          pkg-config --libs --cflags glib-2.0 || true
+
       - name: Build Tauri App
         working-directory: apps/companion
         run: pnpm tauri build
