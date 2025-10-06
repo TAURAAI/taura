@@ -395,10 +395,10 @@ async fn filter_indexed(
                 should_replace = true;
             }
             if should_replace {
-                items[*index].ts = ts_value.clone();
+                items[*index].ts.clone_from(&ts_value);
                 *existing_ts = parsed_ts;
             } else if items[*index].ts.is_none() && ts_value.is_some() {
-                items[*index].ts = ts_value.clone();
+                items[*index].ts.clone_from(&ts_value);
             }
             continue;
         }
