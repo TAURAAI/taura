@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures_util::stream;
 use once_cell::sync::Lazy;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -350,25 +350,52 @@ async fn filter_indexed(
     {
         return Err("mixed user ids unsupported".into());
     }
-    let mut seen = HashSet::new();
-    let mut uris: Vec<String> = Vec::new();
+    #[derive(serde::Serialize)]
+    struct MissingRequestItem {
+        uri: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ts: Option<String>,
+    }
+
+    let mut dedupe: HashMap<String, usize> = HashMap::new();
+    let mut items: Vec<MissingRequestItem> = Vec::new();
     for item in &payload.items {
         let trimmed_uri = item.uri.trim();
         if trimmed_uri.is_empty() {
             continue;
         }
-        if seen.insert(trimmed_uri.to_string()) {
-            uris.push(trimmed_uri.to_string());
+        let normalized = trimmed_uri.to_string();
+        let ts_value = item
+            .ts
+            .as_ref()
+            .and_then(|raw| {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+        if let Some(index) = dedupe.get(&normalized) {
+            if ts_value.is_some() && items[*index].ts.is_none() {
+                items[*index].ts = ts_value;
+            }
+            continue;
         }
+        dedupe.insert(normalized.clone(), items.len());
+        items.push(MissingRequestItem {
+            uri: normalized,
+            ts: ts_value,
+        });
     }
-    if uris.is_empty() {
+    if items.is_empty() {
         return Ok(payload.items);
     }
 
     #[derive(serde::Serialize)]
     struct MissingRequest {
         user_id: String,
-        uris: Vec<String>,
+        items: Vec<MissingRequestItem>,
     }
 
     #[derive(serde::Deserialize)]
@@ -378,7 +405,7 @@ async fn filter_indexed(
 
     let request = MissingRequest {
         user_id: first_user.clone(),
-        uris,
+        items,
     };
 
     let url = format!("{}/sync/missing", trimmed);
