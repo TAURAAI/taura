@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use futures_util::stream;
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
@@ -357,7 +358,13 @@ async fn filter_indexed(
         ts: Option<String>,
     }
 
-    let mut dedupe: HashMap<String, usize> = HashMap::new();
+    fn parse_timestamp(ts: &str) -> Option<DateTime<Utc>> {
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .map(|dt| dt.with_timezone(&Utc))
+            .ok()
+    }
+
+    let mut dedupe: HashMap<String, (usize, Option<DateTime<Utc>>)> = HashMap::new();
     let mut items: Vec<MissingRequestItem> = Vec::new();
     for item in &payload.items {
         let trimmed_uri = item.uri.trim();
@@ -376,13 +383,26 @@ async fn filter_indexed(
                     Some(trimmed.to_string())
                 }
             });
-        if let Some(index) = dedupe.get(&normalized) {
-            if ts_value.is_some() && items[*index].ts.is_none() {
-                items[*index].ts = ts_value;
+        let parsed_ts = ts_value.as_ref().and_then(|value| parse_timestamp(value));
+        if let Some((index, existing_ts)) = dedupe.get_mut(&normalized) {
+            let mut should_replace = match (&parsed_ts, existing_ts) {
+                (Some(new_ts), Some(current_ts)) => new_ts > *current_ts,
+                (Some(_), None) => true,
+                (None, Some(_)) => false,
+                (None, None) => false,
+            };
+            if !should_replace && parsed_ts.is_none() && ts_value.is_some() {
+                should_replace = true;
+            }
+            if should_replace {
+                items[*index].ts = ts_value.clone();
+                *existing_ts = parsed_ts;
+            } else if items[*index].ts.is_none() && ts_value.is_some() {
+                items[*index].ts = ts_value.clone();
             }
             continue;
         }
-        dedupe.insert(normalized.clone(), items.len());
+        dedupe.insert(normalized.clone(), (items.len(), parsed_ts));
         items.push(MissingRequestItem {
             uri: normalized,
             ts: ts_value,
