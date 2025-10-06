@@ -1,0 +1,15 @@
+# Enforce Unix line endings for shell / bash scripts
+*.sh text eol=lf
+
+# Common text files
+*.md  text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+
+# Keep binary types untouched
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.mp4 binary

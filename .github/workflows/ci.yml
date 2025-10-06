@@ -1,0 +1,144 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  companion-build:
+    name: Build test (${{ matrix.display-name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            display-name: Ubuntu
+            platform: linux
+          - os: windows-latest
+            display-name: Windows
+            platform: windows
+          - os: macos-latest
+            display-name: macOS
+            platform: macos
+    env:
+      TAURI_SKIP_UPDATE_CHECK: 'true'
+      VITE_TAURA_GOOGLE_CLIENT_ID: ${{ secrets.VITE_TAURA_GOOGLE_CLIENT_ID }}
+      VITE_TAURA_GOOGLE_CLIENT_SECRET: ${{ secrets.VITE_TAURA_GOOGLE_CLIENT_SECRET }}
+      TAURA_GOOGLE_CLIENT_ID: ${{ secrets.VITE_TAURA_GOOGLE_CLIENT_ID }}
+      TAURA_GOOGLE_CLIENT_SECRET: ${{ secrets.VITE_TAURA_GOOGLE_CLIENT_SECRET }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack use pnpm@`node -p "require('./package.json').packageManager.split('@')[1]"`
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies (Tauri)
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev \
+            libx11-dev \
+            libxdo-dev \
+            pkg-config \
+            libssl-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Tauri companion app
+        working-directory: apps/companion
+        run: pnpm tauri build
+
+  api-gateway-build:
+    name: Build test (API Gateway)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: services/api-gateway/go.mod
+
+      - name: Build API Gateway
+        working-directory: services/api-gateway
+        run: go build ./...
+
+  embedder-build:
+    name: Build test (Embedder service)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v1
+
+      - name: Sync dependencies
+        working-directory: services/embedder
+        env:
+          UV_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+        run: uv sync --frozen --no-dev
+
+      - name: Compile Python sources
+        working-directory: services/embedder
+        run: uv run python -m compileall app
+
+  retrieval-core-build:
+    name: Build test (retrieval-core)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack use pnpm@`node -p "require('./package.json').packageManager.split('@')[1]"`
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build retrieval-core package
+        run: pnpm --filter @taura-ai/retrieval-core build

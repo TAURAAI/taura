@@ -22,6 +22,20 @@ Find any photo, PDF page, or document in milliseconds while you type.
 ## Overview
 Taura combines multi-modal embeddings with time and place heuristics to surface the exact media you are thinking of - directly from any text box (overlay) or the desktop companion. Taura also has a keyboard built in Kotlin for Android, which is still a WIP.
 
+<p align="center">
+  <video
+    src="https://github.com/TAURAAI/taura/raw/main/TAURA.mp4"
+    controls
+    loop
+    muted
+    playsinline
+    width="860"
+  >
+  </video>
+  <br />
+  <a href="https://github.com/TAURAAI/taura/blob/main/TAURA.mp4">Watch the demo video ↗</a>
+</p>
+
 ## 🔍 Current Status (Oct 2025)
 | Area | Status | Notes |
 |------|--------|-------|
@@ -34,7 +48,7 @@ Taura combines multi-modal embeddings with time and place heuristics to surface 
 | Rerank (heuristics) | ✅ Working | Time decay/window, geo boosts, modality prior; retrieval-core exposes typed rerank API |
 | retrieval-core SDK | ✅ Published | @taura-ai/retrieval-core: typed client (search/embed), hybridSearch, pgvector helpers, examples+docs |
 | Postgres + pgvector | ✅ Working | 1152-dim vectors, dim-check + table recreate, practical indexes (modality/album/geo/not-deleted) |
-| Auth schema | ✅ Added | auth_identities, sessions, api_tokens, orgs, org_members, invites, audit_logs in schema |
+| Auth schema | ✅ Added | Implementation to work with Oauth |
 | Stats (/stats) | ✅ Implemented | media_count, embedded_count, last_indexed_at |
 | Privacy Modes | 🧩 Partial | Hybrid implemented; Strict-Local (local embedding) planned |
 | Observability | ⏳ Planned | OTel/metrics dashboards not yet wired |
@@ -84,9 +98,15 @@ psql -h localhost -U postgres -d taura -f packages/schema/pg.sql
 
 ### Python Setup
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # Install uv once per machine
 cd services/embedder
-pip install -r requirements.txt
+UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" \
+  uv sync --python "$(uv python find --max 3.12 --min 3.10)"
+source .venv/bin/activate  # On Windows PowerShell use: .venv/Scripts/Activate.ps1
+uv run uvicorn app.main:app --reload --port 9000
 ```
+
+> The extra index URL surfaces CPU-only PyTorch wheels. Remove the variable if you have CUDA drivers locally.
 
 ## Deployment (current state)
 

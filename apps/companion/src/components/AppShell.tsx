@@ -100,7 +100,7 @@ export function AppShell({ children, footer }: PropsWithChildren<{ footer?: Reac
             </svg>
             <span className="hidden sm:inline">Command</span>
           </button>
-          <div className="text-[11px] text-white/40 ml-auto">v0.1.0</div>
+          <div className="text-[11px] text-white/40 ml-auto">v0.1.1</div>
           {footer}
         </div>
       </aside>

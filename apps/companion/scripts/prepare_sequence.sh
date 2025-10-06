@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Robustness flags (guard for minimal shells that lack 'pipefail' or 'u')
+set -e
+# Some stripped / older bash builds on Windows Git environments may not support -o pipefail or -u
+{ set -o pipefail 2>/dev/null; } || true
+{ set -u 2>/dev/null; } || true
 
 # Usage: scripts/prepare_sequence.sh [input_video] [output_dir] [target_width] [format] [upscale_video_width] [quality] [lossless]
 #   format: jpg|png|webp (default: jpg)
 #   upscale_video_width: if provided, first create an upscaled MP4 used for extraction
 #   quality: encoder dependent (webp: 0-100; jpg: 1(best)-31). Optional.
 #   lossless: for webp set to 1 to force lossless. Optional.
-# Defaults: input=../../Aurora_Dome_Room_Entrance.mp4, output=../public/sequence, width=2880, format=jpg, no video upscale
+# Defaults: input=../../runpod-generatied-video.mp4, output=../public/sequence, width=2880, format=jpg, no video upscale
+# Windows PowerShell invocation examples (note: don't use backticks as line continuations when embedding inside bash call):
+#   bash apps/companion/scripts/prepare_sequence.sh ./Runpod-generated-video.mp4 apps/companion/public/sequence 2880 webp "" 82
+# Or simply (uses defaults if video present at repo root):
+#   bash apps/companion/scripts/prepare_sequence.sh
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 APP_DIR=$(cd "$SCRIPT_DIR/.." && pwd)
 ROOT_DIR=$(cd "$APP_DIR/../.." && pwd)
 
-INPUT_VIDEO=${1:-"$ROOT_DIR/Aurora_Dome_Room_Entrance.mp4"}
+INPUT_VIDEO=${1:-"$ROOT_DIR/runpod-generatied-video.mp4"}
 OUT_DIR=${2:-"$APP_DIR/public/sequence"}
 TARGET_WIDTH=${3:-2880}
 FORMAT=${4:-jpg}
@@ -72,6 +80,15 @@ case "$FORMAT" in
 esac
 
 echo "Extracting + upscaling frames from $INPUT_VIDEO to width=$TARGET_WIDTH using lanczos... (format=$FORMAT)" >&2
+
+# Suggested quality-size tradeoffs:
+#   jpg: QUALITY=2-4 (1 is largest/best). Use 4 for ~visually lossless with smaller size.
+#   webp lossy: QUALITY=78-85 for high quality (default 82). 82 is a sweet spot.
+#   webp lossless: set LOSSLESS=1 (larger). Only use for artifacts-sensitive UI sequences.
+# Example (best quality moderate size WebP):
+#   ./scripts/prepare_sequence.sh "$ROOT_DIR/runpod-generatied-video.mp4" "$APP_DIR/public/sequence" 2880 webp "" 82
+# Example (fast JPEG, a bit smaller):
+#   ./scripts/prepare_sequence.sh "$ROOT_DIR/runpod-generatied-video.mp4" "$APP_DIR/public/sequence" 2560 jpg "" 4
 ffmpeg -y -hide_banner -loglevel error \
   -i "$INPUT_VIDEO" \
   -vf "scale=${TARGET_WIDTH}:-1:flags=lanczos,unsharp=5:5:0.8:5:5:0.0" \

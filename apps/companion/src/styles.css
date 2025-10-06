@@ -315,6 +315,14 @@ body::-webkit-scrollbar-thumb:hover, .content-area::-webkit-scrollbar-thumb:hove
 
 @keyframes spin { to { transform: rotate(360deg);} }
 
+/* Scroll hint dot animation (moves downward then fades and loops) */
+@keyframes scrollDot {
+  0% { transform: translateY(0); opacity: 0.9; }
+  35% { opacity: 1; }
+  70% { transform: translateY(12px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 0; }
+}
+
 .palette-list {
   list-style: none;
   margin: 0;

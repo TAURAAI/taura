@@ -1,4 +1,4 @@
-# @taura/retrieval-core
+# @taura-ai/retrieval-core
 
 Reusable retrieval primitives for semantic search apps.
 
@@ -9,7 +9,7 @@ This package provides:
 - A light reranker that combines vector similarity + heuristics
 - Helpers to generate parameterized pgvector SQL snippets
 
-Install (from this monorepo via pnpm workspace) or `npm i @taura-ai/retrieval-core` when published.
+Install `npm i @taura-ai/retrieval-core` 
 
 ## Quick start
 

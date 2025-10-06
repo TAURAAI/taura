@@ -109,7 +109,15 @@ export default function ScrollImageSequence({ className, frames = 280, scrollLen
 
     setMinHeight()
     resize()
-    window.addEventListener('resize', () => { setMinHeight(); resize() })
+    const onWinResize = () => { setMinHeight(); resize() }
+    window.addEventListener('resize', onWinResize)
+
+    // Also observe element size changes (e.g., when unpinned or layout shifts) to keep canvas & background in sync
+    const ro = new ResizeObserver(() => {
+      // Defer slightly to allow layout to settle (especially after pin/unpin)
+      requestAnimationFrame(resize)
+    })
+    try { ro.observe(wrap) } catch (_) { /* no-op */ }
 
     // If not yet discovered, fetch manifest to construct URLs
     let aborted = false
@@ -268,6 +276,8 @@ export default function ScrollImageSequence({ className, frames = 280, scrollLen
       aborted = true
       const cleanup = (wrap as any)._sequenceCleanup
       if (typeof cleanup === 'function') cleanup()
+      window.removeEventListener('resize', onWinResize)
+      try { ro.disconnect() } catch (_) { /* ignore */ }
     }
   }, [frames, scrollLengthPx, reverse, manifestPath])
 
@@ -275,7 +285,8 @@ export default function ScrollImageSequence({ className, frames = 280, scrollLen
     <section
       ref={wrapRef}
       className={className}
-      style={{ position: 'relative', width: '100%', height: '100vh', overflow: 'hidden', background: 'transparent' }}
+      // Use both height and minHeight to aggressively cover viewport; 100dvh for modern browsers, fallback to 100vh
+      style={{ position: 'relative', width: '100%', height: '100vh', minHeight: '100dvh', overflow: 'hidden', background: 'transparent' }}
     >
       {backgroundNode && (
         <div ref={bgWrapRef} id="__seq_bg__" style={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none' }}>
