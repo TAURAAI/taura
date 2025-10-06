@@ -38,6 +38,15 @@ type SyncRequest struct {
 	Items []MediaUpsert `json:"items"`
 }
 
+type SyncMissingRequest struct {
+	UserID string   `json:"user_id"`
+	URIs   []string `json:"uris"`
+}
+
+type SyncMissingResponse struct {
+	Missing []string `json:"missing"`
+}
+
 type failureDetail struct {
 	URI   string `json:"uri"`
 	Error string `json:"error"`
@@ -130,6 +139,85 @@ func upsertMedia(ctx context.Context, database *db.Database, userUUID string, it
 	return mediaID, inserted, nil
 }
 
+var performUpsertMedia = upsertMedia
+
+func queryMediaEmbeddingExists(ctx context.Context, database *db.Database, mediaID string) (bool, error) {
+	if database == nil || database.Pool == nil {
+		return false, errors.New("db missing")
+	}
+	var exists bool
+	if err := database.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM media_vecs WHERE media_id=$1)`, mediaID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+var mediaEmbeddingExists = queryMediaEmbeddingExists
+
+func findMissingEmbeddings(ctx context.Context, database *db.Database, userID string, uris []string) ([]string, error) {
+	if database == nil || database.Pool == nil {
+		return nil, errors.New("db missing")
+	}
+	if len(uris) == 0 {
+		return nil, nil
+	}
+	unique := make(map[string]struct{}, len(uris))
+	ordered := make([]string, 0, len(uris))
+	for _, uri := range uris {
+		trimmed := strings.TrimSpace(uri)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := unique[trimmed]; ok {
+			continue
+		}
+		unique[trimmed] = struct{}{}
+		ordered = append(ordered, trimmed)
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	rows, err := database.Pool.Query(ctx, `
+SELECT m.uri, (mv.media_id IS NOT NULL) AS has_embedding
+FROM media m
+LEFT JOIN media_vecs mv ON mv.media_id = m.id
+WHERE m.user_id=$1 AND m.uri = ANY($2)
+`, userID, ordered)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	missing := make(map[string]struct{}, len(ordered))
+	for _, uri := range ordered {
+		missing[uri] = struct{}{}
+	}
+
+	for rows.Next() {
+		var uri string
+		var hasEmbedding bool
+		if err := rows.Scan(&uri, &hasEmbedding); err != nil {
+			return nil, err
+		}
+		if hasEmbedding {
+			delete(missing, uri)
+		} else {
+			missing[uri] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]string, 0, len(missing))
+	for _, uri := range ordered {
+		if _, ok := missing[uri]; ok {
+			result = append(result, uri)
+		}
+	}
+	return result, nil
+}
+
 func resolveInlineBytes(item MediaUpsert) ([]byte, []failureDetail) {
 	var failures []failureDetail
 	if item.BytesB64 != nil && *item.BytesB64 != "" {
@@ -179,7 +267,7 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if !ok {
 		return res
 	}
-	mediaID, inserted, err := upsertMedia(ctx, database, userUUID, item)
+	mediaID, inserted, err := performUpsertMedia(ctx, database, userUUID, item)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -201,6 +289,12 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	}
 	lower := strings.ToLower(item.Modality)
 	if lower != "image" && lower != "pdf_page" {
+		return res
+	}
+	exists, err := mediaEmbeddingExists(ctx, database, mediaID)
+	if err != nil {
+		log.Printf("media embedding lookup failed media_id=%s err=%v", mediaID, err)
+	} else if exists {
 		return res
 	}
 	inline, readFailures := resolveInlineBytes(item)
@@ -272,6 +366,34 @@ func PostSync(c *fiber.Ctx) error {
 		"embed_queue_depth": queueDepth,
 		"embedder_status":   embedStatus,
 	})
+}
+
+func PostSyncMissing(c *fiber.Ctx) error {
+	var req SyncMissingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	database, ok := c.Locals("db").(*db.Database)
+	if !ok || database == nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
+	}
+	if req.UserID == "" || len(req.URIs) == 0 {
+		return c.JSON(SyncMissingResponse{Missing: []string{}})
+	}
+
+	ctx := context.Background()
+	userUUID, ok := resolveUserID(ctx, database, req.UserID)
+	if !ok {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid user")
+	}
+
+	missing, err := findMissingEmbeddings(ctx, database, userUUID, req.URIs)
+	if err != nil {
+		log.Printf("/sync/missing lookup failed user_id=%s err=%v", userUUID, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "lookup failed")
+	}
+
+	return c.JSON(SyncMissingResponse{Missing: missing})
 }
 
 func PostSyncStream(c *fiber.Ctx) error {

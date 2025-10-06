@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures_util::stream;
 use once_cell::sync::Lazy;
+use std::collections::HashSet;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -327,6 +328,92 @@ async fn sync_index(server_url: String, payload: SyncPayload) -> Result<SyncResu
 }
 
 #[tauri::command]
+async fn filter_indexed(
+    server_url: String,
+    payload: SyncPayload,
+) -> Result<Vec<SyncPayloadItem>, String> {
+    if server_url.is_empty() {
+        return Err("server_url empty".into());
+    }
+    if payload.items.is_empty() {
+        return Ok(Vec::new());
+    }
+    let trimmed = server_url.trim_end_matches('/');
+    let first_user = payload.items[0].user_id.clone();
+    if first_user.is_empty() {
+        return Ok(payload.items);
+    }
+    if payload
+        .items
+        .iter()
+        .any(|item| item.user_id != first_user)
+    {
+        return Err("mixed user ids unsupported".into());
+    }
+    let mut seen = HashSet::new();
+    let mut uris: Vec<String> = Vec::new();
+    for item in &payload.items {
+        let trimmed_uri = item.uri.trim();
+        if trimmed_uri.is_empty() {
+            continue;
+        }
+        if seen.insert(trimmed_uri.to_string()) {
+            uris.push(trimmed_uri.to_string());
+        }
+    }
+    if uris.is_empty() {
+        return Ok(payload.items);
+    }
+
+    #[derive(serde::Serialize)]
+    struct MissingRequest {
+        user_id: String,
+        uris: Vec<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct MissingResponse {
+        missing: Vec<String>,
+    }
+
+    let request = MissingRequest {
+        user_id: first_user.clone(),
+        uris,
+    };
+
+    let url = format!("{}/sync/missing", trimmed);
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(url)
+        .json(&request)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("missing probe failed: {}", resp.status()));
+    }
+    let missing = resp
+        .json::<MissingResponse>()
+        .await
+        .map_err(|e| e.to_string())?;
+    if missing.missing.is_empty() {
+        return Ok(Vec::new());
+    }
+    let missing_set: HashSet<String> = missing.missing.into_iter().collect();
+    let filtered: Vec<SyncPayloadItem> = payload
+        .items
+        .into_iter()
+        .filter(|item| {
+            if item.uri.trim().is_empty() {
+                return true;
+            }
+            missing_set.contains(item.uri.trim())
+        })
+        .collect();
+    Ok(filtered)
+}
+
+#[tauri::command]
 async fn show_overlay(app: tauri::AppHandle) -> Result<(), String> {
     if !ensure_authenticated(&app).await? {
         return Err("not authenticated".into());
@@ -417,6 +504,7 @@ pub fn run() {
             scan_folder,
             stop_scan,
             set_default_throttle,
+            filter_indexed,
             sync_index,
             show_overlay,
             toggle_overlay,
