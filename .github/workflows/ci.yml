@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build test (${{ matrix.display-name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            display-name: Ubuntu
+          - os: windows-latest
+            display-name: Windows
+          - os: macos-latest
+            display-name: macOS
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Corepack & pnpm
+        run: |
+          corepack enable
+          corepack use pnpm@`node -p "require('./package.json').packageManager.split('@')[1]"`
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build companion app
+        run: pnpm --filter companion build
