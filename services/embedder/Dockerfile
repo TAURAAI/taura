@@ -22,8 +22,8 @@ ENV PANORAMA_MAX_RATIO="2.6"
 ENV MODEL_PRECISION="bf16"
 
 # Pre-download the model
-RUN uv run --no-sync python -c "from app.models import load_model; load_model()"
+RUN python -c "from app.models import load_model; load_model()"
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 9000
-CMD ["uv", "run", "--no-sync", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "9000"]

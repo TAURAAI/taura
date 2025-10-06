@@ -115,7 +115,7 @@ jobs:
 
       - name: Compile Python sources
         working-directory: services/embedder
-        run: uv run --no-sync python -m compileall app
+        run: uv run python -m compileall app
 
   retrieval-core-build:
     name: Build test (retrieval-core)

@@ -103,7 +103,7 @@ cd services/embedder
 UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" \
   uv sync --python "$(uv python find --max 3.12 --min 3.10)"
 source .venv/bin/activate  # On Windows PowerShell use: .venv/Scripts/Activate.ps1
-uv run --no-sync uvicorn app.main:app --reload --port 9000
+uv run uvicorn app.main:app --reload --port 9000
 ```
 
 > The extra index URL surfaces CPU-only PyTorch wheels. Remove the variable if you have CUDA drivers locally.
