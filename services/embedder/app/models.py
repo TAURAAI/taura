@@ -131,7 +131,7 @@ def load_model(device: str = None) -> None:
         logger.warning("[MODEL_INIT] CUDA unavailable; falling back to %s", VISION_DEVICE)
 
     if not _HAS_OPEN_CLIP:
-        raise RuntimeError("open_clip is not installed. `pip install -U open-clip-torch`")
+        raise RuntimeError("open_clip is not installed. `uv add open-clip-torch`")
 
     try:
         # load the OpenCLIP-converted SigLIP model from HF Hub
