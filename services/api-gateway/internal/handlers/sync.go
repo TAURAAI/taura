@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5"
 	"log"
 	"os"
 	"strings"
@@ -154,6 +156,26 @@ func queryMediaEmbeddingExists(ctx context.Context, database *db.Database, media
 
 var mediaEmbeddingExists = queryMediaEmbeddingExists
 
+func queryExistingMediaTimestamp(ctx context.Context, database *db.Database, userID string, uri string) (*time.Time, error) {
+	if database == nil || database.Pool == nil {
+		return nil, errors.New("db missing")
+	}
+	var ts sql.NullTime
+	if err := database.Pool.QueryRow(ctx, `SELECT ts FROM media WHERE user_id=$1 AND uri=$2`, userID, uri).Scan(&ts); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if ts.Valid {
+		value := ts.Time
+		return &value, nil
+	}
+	return nil, nil
+}
+
+var lookupExistingMediaTimestamp = queryExistingMediaTimestamp
+
 func findMissingEmbeddings(ctx context.Context, database *db.Database, userID string, uris []string) ([]string, error) {
 	if database == nil || database.Pool == nil {
 		return nil, errors.New("db missing")
@@ -267,6 +289,17 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if !ok {
 		return res
 	}
+	tsProvided := item.TS != nil && strings.TrimSpace(*item.TS) != ""
+	var previousTS *time.Time
+	tsLookupFailed := false
+	if lookupExistingMediaTimestamp != nil {
+		var err error
+		previousTS, err = lookupExistingMediaTimestamp(ctx, database, userUUID, item.URI)
+		if err != nil {
+			tsLookupFailed = true
+			log.Printf("media timestamp lookup failed uri=%s err=%v", item.URI, err)
+		}
+	}
 	mediaID, inserted, err := performUpsertMedia(ctx, database, userUUID, item)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -287,6 +320,7 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if inserted {
 		res.upserted = 1
 	}
+	incomingTS := parseTimestamp(item.TS)
 	lower := strings.ToLower(item.Modality)
 	if lower != "image" && lower != "pdf_page" {
 		return res
@@ -295,7 +329,9 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if err != nil {
 		log.Printf("media embedding lookup failed media_id=%s err=%v", mediaID, err)
 	} else if exists {
-		return res
+		if !tsLookupFailed && !shouldReembedMedia(incomingTS, previousTS, tsProvided) {
+			return res
+		}
 	}
 	inline, readFailures := resolveInlineBytes(item)
 	if len(readFailures) > 0 {
@@ -313,6 +349,19 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	res.queued = 1
 	log.Printf("/sync enqueued uri=%s media_id=%s queue_depth=%d", item.URI, mediaID, embed.QueueDepth())
 	return res
+}
+
+func shouldReembedMedia(incomingTS *time.Time, previousTS *time.Time, tsProvided bool) bool {
+	if !tsProvided {
+		return false
+	}
+	if incomingTS == nil {
+		return true
+	}
+	if previousTS == nil {
+		return true
+	}
+	return !incomingTS.Equal(*previousTS)
 }
 
 func PostSync(c *fiber.Ctx) error {
