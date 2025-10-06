@@ -386,7 +386,7 @@ async fn filter_indexed(
         let parsed_ts = ts_value.as_ref().and_then(|value| parse_timestamp(value));
         if let Some((index, existing_ts)) = dedupe.get_mut(&normalized) {
             let mut should_replace = match (&parsed_ts, existing_ts) {
-                (Some(new_ts), Some(current_ts)) => new_ts > *current_ts,
+                (Some(new_ts), Some(current_ts)) => new_ts > current_ts,
                 (Some(_), None) => true,
                 (None, Some(_)) => false,
                 (None, None) => false,
