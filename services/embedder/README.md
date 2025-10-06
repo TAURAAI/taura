@@ -11,13 +11,16 @@ Default build ships with **SigLIP So400M ViT-L/14 @384** (`hf-hub:timm/ViT-SO400
 - POST `/embed/image` multipart/form-data file=<image>
 
 ## Run locally (CPU)
-```powershell
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh   # Install uv once per machine
 cd services/embedder
-python -m venv .venv
-. .venv/Scripts/Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 9000
+UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cpu" \
+  uv sync --python "$(uv python find --max 3.12 --min 3.10)"
+source .venv/bin/activate  # On Windows PowerShell use: .venv/Scripts/Activate.ps1
+uv run --no-sync uvicorn app.main:app --reload --port 9000
 ```
+
+> The `UV_EXTRA_INDEX_URL` ensures CPU-only wheels resolve without needing CUDA locally. Remove it if you have a GPU-capable PyTorch index available.
 
 ## Docker (GPU)
 ```powershell
@@ -43,7 +46,7 @@ docker run --gpus all -p 9000:9000 embedder:dev
 - `ENABLE_TTA` (`1` to run 5-crop + panorama tiling, `0` to disable for latency-sensitive paths)
 - `PANORAMA_MAX_RATIO` (split very wide images into tiles; default `2.6`)
 - `REQUIRE_CUDA` (`1` by default; set to `0` only if CPU/MPS fallback is acceptable)
-- `LOG_LEVEL` / `LOG_FORMAT` to control structured logging ( defaults: `INFO`, `"%(asctime)s | %(levelname)s | %(name)s | %(message)s"` )
+- `LOG_LEVEL` / `LOG_FORMAT` to control structured logging ( defaults: `INFO`, `"%(asctime)s | %(levelname)s | %(name)s | %(message)s" )
 - Models hosted on Hugging Face may require a valid `HF_TOKEN`; export it inside the container (`export HF_TOKEN=...`) before starting the server if you see 401 errors.
 
 ## TODO (Upgrade to Production)
