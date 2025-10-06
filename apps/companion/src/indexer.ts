@@ -133,6 +133,13 @@ let sentCount = 0
 let processedBatches = 0
 let aggregateTotals: UploadAggregate = resetAggregate()
 
+type SyncMetadataItem = {
+  user_id: string
+  modality: string
+  uri: string
+  ts?: string
+}
+
 // ---- Connectivity gating ----
 let lastOnlineCheck = 0
 let cachedOnline: boolean | null = null
@@ -383,7 +390,20 @@ async function uploadWorkerLoop(): Promise<void> {
         continue
       }
 
-  const chunk = uploadQueue.splice(0, STREAM_CHUNK_SIZE)
+      const rawChunk = uploadQueue.splice(0, STREAM_CHUNK_SIZE)
+      const userId = (currentConfig.userId || '').trim()
+      const { filteredChunk } = await filterChunkForUpload(serverUrlRaw, rawChunk, userId)
+      totalPlanned = uploadQueue.length + filteredChunk.length
+      if (!filteredChunk.length) {
+        sentCount += rawChunk.length
+        processedBatches += 1
+        aggregateTotals.chunksProcessed += 1
+        aggregateTotals.queueDepth = uploadQueue.length
+        totalPlanned = uploadQueue.length
+        applyUploadSnapshot()
+        continue
+      }
+      const chunk = filteredChunk
       const { payloadItems, localReadErrors } = await prepareStreamPayload(chunk)
 
       let result: SyncResult | null = null
@@ -455,7 +475,8 @@ async function uploadWorkerLoop(): Promise<void> {
         aggregateTotals.requested += localReadErrors.length
       }
 
-      sentCount += chunk.length
+      sentCount += rawChunk.length
+      totalPlanned = uploadQueue.length
       applyUploadSnapshot()
 
       for (const item of chunk) {
@@ -471,6 +492,58 @@ async function uploadWorkerLoop(): Promise<void> {
     totalPlanned = 0
     sentCount = 0
     processedBatches = 0
+  }
+}
+
+export async function filterChunkForUpload(
+  serverUrl: string,
+  chunk: any[],
+  userId: string,
+): Promise<{ filteredChunk: any[]; missingMetadata: SyncMetadataItem[] }> {
+  const trimmedServer = (serverUrl || '').trim()
+  if (!trimmedServer || !chunk.length || !userId) {
+    return { filteredChunk: chunk, missingMetadata: [] }
+  }
+
+  const metadata: SyncMetadataItem[] = []
+  for (const item of chunk) {
+    const uri = typeof item.path === 'string' ? item.path : ''
+    const modality = typeof item.modality === 'string' ? item.modality : ''
+    if (!uri || !modality) continue
+    const record: SyncMetadataItem = {
+      user_id: userId,
+      modality,
+      uri,
+    }
+    if (typeof item.modified === 'string' && item.modified) {
+      record.ts = item.modified
+    }
+    metadata.push(record)
+  }
+
+  if (!metadata.length) {
+    return { filteredChunk: chunk, missingMetadata: [] }
+  }
+
+  try {
+    const missing = await invoke<SyncMetadataItem[]>('filter_indexed', {
+      serverUrl: trimmedServer,
+      payload: { items: metadata },
+    })
+    if (!Array.isArray(missing) || missing.length === 0) {
+      const fallback = chunk.filter((item) => typeof item.path !== 'string' || item.path.trim() === '')
+      return { filteredChunk: fallback, missingMetadata: [] }
+    }
+    const missingSet = new Set(missing.map((m) => m.uri))
+    const filtered = chunk.filter((item) => {
+      const uri = typeof item.path === 'string' ? item.path : ''
+      if (!uri) return true
+      return missingSet.has(uri)
+    })
+    return { filteredChunk: filtered, missingMetadata: missing }
+  } catch (err) {
+    console.warn('filter_indexed failed, falling back to full chunk', err)
+    return { filteredChunk: chunk, missingMetadata: [] }
   }
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5"
 	"log"
 	"os"
 	"strings"
@@ -36,6 +38,20 @@ type MediaUpsert struct {
 
 type SyncRequest struct {
 	Items []MediaUpsert `json:"items"`
+}
+
+type SyncMissingProbe struct {
+	URI string  `json:"uri"`
+	TS  *string `json:"ts,omitempty"`
+}
+
+type SyncMissingRequest struct {
+	UserID string             `json:"user_id"`
+	Items  []SyncMissingProbe `json:"items"`
+}
+
+type SyncMissingResponse struct {
+	Missing []string `json:"missing"`
 }
 
 type failureDetail struct {
@@ -130,6 +146,137 @@ func upsertMedia(ctx context.Context, database *db.Database, userUUID string, it
 	return mediaID, inserted, nil
 }
 
+var performUpsertMedia = upsertMedia
+
+func queryMediaEmbeddingExists(ctx context.Context, database *db.Database, mediaID string) (bool, error) {
+	if database == nil || database.Pool == nil {
+		return false, errors.New("db missing")
+	}
+	var exists bool
+	if err := database.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM media_vecs WHERE media_id=$1)`, mediaID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+var mediaEmbeddingExists = queryMediaEmbeddingExists
+
+func queryExistingMediaTimestamp(ctx context.Context, database *db.Database, userID string, uri string) (*time.Time, error) {
+	if database == nil || database.Pool == nil {
+		return nil, errors.New("db missing")
+	}
+	var ts sql.NullTime
+	if err := database.Pool.QueryRow(ctx, `SELECT ts FROM media WHERE user_id=$1 AND uri=$2`, userID, uri).Scan(&ts); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if ts.Valid {
+		value := ts.Time
+		return &value, nil
+	}
+	return nil, nil
+}
+
+var lookupExistingMediaTimestamp = queryExistingMediaTimestamp
+
+type missingProbeMeta struct {
+	hasTS bool
+	ts    string
+}
+
+func findMissingEmbeddings(ctx context.Context, database *db.Database, userID string, probes []SyncMissingProbe) ([]string, error) {
+	if database == nil || database.Pool == nil {
+		return nil, errors.New("db missing")
+	}
+	if len(probes) == 0 {
+		return nil, nil
+	}
+	ordered := make([]string, 0, len(probes))
+	meta := make(map[string]missingProbeMeta, len(probes))
+	for _, probe := range probes {
+		trimmed := strings.TrimSpace(probe.URI)
+		if trimmed == "" {
+			continue
+		}
+		tsProvided := probe.TS != nil && strings.TrimSpace(*probe.TS) != ""
+		tsValue := ""
+		if tsProvided {
+			tsValue = strings.TrimSpace(*probe.TS)
+		}
+		if existing, ok := meta[trimmed]; ok {
+			if !existing.hasTS && tsProvided {
+				meta[trimmed] = missingProbeMeta{hasTS: true, ts: tsValue}
+			}
+			continue
+		}
+		meta[trimmed] = missingProbeMeta{hasTS: tsProvided, ts: tsValue}
+		ordered = append(ordered, trimmed)
+	}
+	if len(ordered) == 0 {
+		return nil, nil
+	}
+	rows, err := database.Pool.Query(ctx, `
+SELECT m.uri, (mv.media_id IS NOT NULL) AS has_embedding, m.ts
+FROM media m
+LEFT JOIN media_vecs mv ON mv.media_id = m.id
+WHERE m.user_id=$1 AND m.uri = ANY($2)
+`, userID, ordered)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	missing := make(map[string]struct{}, len(ordered))
+	for _, uri := range ordered {
+		missing[uri] = struct{}{}
+	}
+
+	for rows.Next() {
+		var uri string
+		var hasEmbedding bool
+		var storedTS sql.NullTime
+		if err := rows.Scan(&uri, &hasEmbedding, &storedTS); err != nil {
+			return nil, err
+		}
+		candidate, ok := meta[uri]
+		if !ok {
+			continue
+		}
+		if hasEmbedding {
+			var previousTS *time.Time
+			if storedTS.Valid {
+				value := storedTS.Time
+				previousTS = &value
+			}
+			var incomingTS *time.Time
+			if candidate.hasTS {
+				tsCopy := candidate.ts
+				incomingTS = parseTimestamp(&tsCopy)
+			}
+			if shouldReembedMedia(incomingTS, previousTS, candidate.hasTS) {
+				missing[uri] = struct{}{}
+				continue
+			}
+			delete(missing, uri)
+		} else {
+			missing[uri] = struct{}{}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]string, 0, len(missing))
+	for _, uri := range ordered {
+		if _, ok := missing[uri]; ok {
+			result = append(result, uri)
+		}
+	}
+	return result, nil
+}
+
 func resolveInlineBytes(item MediaUpsert) ([]byte, []failureDetail) {
 	var failures []failureDetail
 	if item.BytesB64 != nil && *item.BytesB64 != "" {
@@ -179,7 +326,18 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if !ok {
 		return res
 	}
-	mediaID, inserted, err := upsertMedia(ctx, database, userUUID, item)
+	tsProvided := item.TS != nil && strings.TrimSpace(*item.TS) != ""
+	var previousTS *time.Time
+	tsLookupFailed := false
+	if lookupExistingMediaTimestamp != nil {
+		var err error
+		previousTS, err = lookupExistingMediaTimestamp(ctx, database, userUUID, item.URI)
+		if err != nil {
+			tsLookupFailed = true
+			log.Printf("media timestamp lookup failed uri=%s err=%v", item.URI, err)
+		}
+	}
+	mediaID, inserted, err := performUpsertMedia(ctx, database, userUUID, item)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -199,9 +357,18 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	if inserted {
 		res.upserted = 1
 	}
+	incomingTS := parseTimestamp(item.TS)
 	lower := strings.ToLower(item.Modality)
 	if lower != "image" && lower != "pdf_page" {
 		return res
+	}
+	exists, err := mediaEmbeddingExists(ctx, database, mediaID)
+	if err != nil {
+		log.Printf("media embedding lookup failed media_id=%s err=%v", mediaID, err)
+	} else if exists {
+		if !tsLookupFailed && !shouldReembedMedia(incomingTS, previousTS, tsProvided) {
+			return res
+		}
 	}
 	inline, readFailures := resolveInlineBytes(item)
 	if len(readFailures) > 0 {
@@ -219,6 +386,19 @@ func processSyncItem(ctx context.Context, database *db.Database, item MediaUpser
 	res.queued = 1
 	log.Printf("/sync enqueued uri=%s media_id=%s queue_depth=%d", item.URI, mediaID, embed.QueueDepth())
 	return res
+}
+
+func shouldReembedMedia(incomingTS *time.Time, previousTS *time.Time, tsProvided bool) bool {
+	if !tsProvided {
+		return false
+	}
+	if incomingTS == nil {
+		return true
+	}
+	if previousTS == nil {
+		return true
+	}
+	return !incomingTS.Equal(*previousTS)
 }
 
 func PostSync(c *fiber.Ctx) error {
@@ -272,6 +452,34 @@ func PostSync(c *fiber.Ctx) error {
 		"embed_queue_depth": queueDepth,
 		"embedder_status":   embedStatus,
 	})
+}
+
+func PostSyncMissing(c *fiber.Ctx) error {
+	var req SyncMissingRequest
+	if err := c.BodyParser(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	database, ok := c.Locals("db").(*db.Database)
+	if !ok || database == nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "db missing")
+	}
+	if req.UserID == "" || len(req.Items) == 0 {
+		return c.JSON(SyncMissingResponse{Missing: []string{}})
+	}
+
+	ctx := context.Background()
+	userUUID, ok := resolveUserID(ctx, database, req.UserID)
+	if !ok {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid user")
+	}
+
+	missing, err := findMissingEmbeddings(ctx, database, userUUID, req.Items)
+	if err != nil {
+		log.Printf("/sync/missing lookup failed user_id=%s err=%v", userUUID, err)
+		return fiber.NewError(fiber.StatusInternalServerError, "lookup failed")
+	}
+
+	return c.JSON(SyncMissingResponse{Missing: missing})
 }
 
 func PostSyncStream(c *fiber.Ctx) error {
