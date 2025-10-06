@@ -48,7 +48,7 @@ Taura combines multi-modal embeddings with time and place heuristics to surface 
 | Rerank (heuristics) | ✅ Working | Time decay/window, geo boosts, modality prior; retrieval-core exposes typed rerank API |
 | retrieval-core SDK | ✅ Published | @taura-ai/retrieval-core: typed client (search/embed), hybridSearch, pgvector helpers, examples+docs |
 | Postgres + pgvector | ✅ Working | 1152-dim vectors, dim-check + table recreate, practical indexes (modality/album/geo/not-deleted) |
-| Auth schema | ✅ Added | auth_identities, sessions, api_tokens, orgs, org_members, invites, audit_logs in schema |
+| Auth schema | ✅ Added | Implementation to work with Oauth |
 | Stats (/stats) | ✅ Implemented | media_count, embedded_count, last_indexed_at |
 | Privacy Modes | 🧩 Partial | Hybrid implemented; Strict-Local (local embedding) planned |
 | Observability | ⏳ Planned | OTel/metrics dashboards not yet wired |
