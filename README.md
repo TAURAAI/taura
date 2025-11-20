@@ -36,26 +36,6 @@ Taura combines multi-modal embeddings with time and place heuristics to surface 
   <a href="https://github.com/TAURAAI/taura/blob/main/TAURA.mp4">Watch the demo video ↗</a>
 </p>
 
-## 🔍 Current Status (Oct 2025)
-| Area | Status | Notes |
-|------|--------|-------|
-| Companion (scan • overlay • auth) | ✅ Working | Recursive scan (throttled), cinematic onboarding + preview, overlay global shortcut, Google OAuth; overlay routing fixed |
-| Preview Experience | ✅ Polished | Local image previews via data URLs (no local-resource errors), cinematic ImageTrail with vignette, clear CTAs |
-| Media Enumeration | ✅ Basic | File-extension modality: image/pdf_page/video; EXIF/GPS/OCR extraction planned |
-| Streaming Sync (/sync/stream) | ✅ Implemented | NDJSON upsert, inline image bytes (<=25MB), queue + depth metrics |
-| Embedding (GPU) | ✅ Implemented | SigLIP So400M (1152-dim), multi-crop + panorama tiling; text + image endpoints |
-| Search (/search) | ✅ Working | pgvector IVFFlat (lists=100, probes configurable), filters (modality/time/geo/album), keyword fallback |
-| Rerank (heuristics) | ✅ Working | Time decay/window, geo boosts, modality prior; retrieval-core exposes typed rerank API |
-| retrieval-core SDK | ✅ Published | @taura-ai/retrieval-core: typed client (search/embed), hybridSearch, pgvector helpers, examples+docs |
-| Postgres + pgvector | ✅ Working | 1152-dim vectors, dim-check + table recreate, practical indexes (modality/album/geo/not-deleted) |
-| Auth schema | ✅ Added | Implementation to work with Oauth |
-| Stats (/stats) | ✅ Implemented | media_count, embedded_count, last_indexed_at |
-| Privacy Modes | 🧩 Partial | Hybrid implemented; Strict-Local (local embedding) planned |
-| Observability | ⏳ Planned | OTel/metrics dashboards not yet wired |
-| Mobile Keyboards | 🧪 Skeleton | Android IME stub; iOS extension not started |
-| PDF / Video / Audio | ⏳ Planned | PDF raster/keyframes/transcripts not implemented |
-| CI Build/Release | ✅ Added | Multi‑platform build pipeline (companion‑release.yml) |
-
 ## 🏗 Architecture Overview
 Core components:
 - Companion App (Tauri v2 / React) - local indexing, UI, optional local vector db.
